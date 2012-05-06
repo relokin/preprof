@@ -184,9 +184,14 @@ static void *wrapped_start_routine(void *arg)
 	log_event_t event;
 	struct perfctr_cpu_control cpu_control;
 	process_vect_t proc_vect;
+	process_t proc;
 
 	printf("PID of this process: %d\n", getpid());
 	printf("The ID of this thread is: %u\n", (unsigned int)pthread_self());
+
+	process_init(&proc);
+	VECT_APPEND(&proc_vect, proc);
+
 	EXPECT(!log_header_init(&proc_vect, &header));
 	EXPECT(log_create(&log, &header, log_filename) == LOG_ERROR_OK);
 
