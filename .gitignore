@@ -29,3 +29,4 @@ m4/
 
 libpreprof_la-preprof.lo
 libpreprof_la-process.lo
+libpreprof_la-log.lo

@@ -126,8 +126,6 @@ static void setup(void)
 		(unsigned long) getpid());
 }
 
-static  __thread void *(*real_start_routine)(void *) = NULL;
-
 static int
 _log_header_init(process_t *p, log_header_process_t *h)
 {
@@ -147,7 +145,7 @@ _log_header_init(process_t *p, log_header_process_t *h)
 
     memcpy(h->allowed_colors, p->allowed_colors, CC_MASK_LEN);
 
-    EXPECT(!utils_md5(VECT_ELEM(&p->argv, 0), md5hash));
+    //EXPECT(!utils_md5(VECT_ELEM(&p->argv, 0), md5hash));
     memcpy(&h->md5hash, md5hash, sizeof(md5hash));
 
     h->pmc_map.counters = p->cpu_control.nractrs + p->cpu_control.nrictrs;
@@ -168,12 +166,17 @@ log_header_init(process_vect_t *pv, log_header_t *h)
     memset(h, 0, sizeof *h);
     h->version = LOG_VERSION_CURRENT;
 
-    VECT_FOREACH(pv, iter)
-        EXPECT(!_log_header_init(iter, &h->processes[i++]));
+//    VECT_FOREACH(pv, iter)
+    //       EXPECT(!_log_header_init(iter, &h->processes[i++]));
     h->num_processes = i;
 
     return 0;
 }
+
+struct thread_info {
+	void *(*routine) (void *);
+	void *arg;
+};
 
 static void *wrapped_start_routine(void *arg)
 {
@@ -185,11 +188,14 @@ static void *wrapped_start_routine(void *arg)
 	struct perfctr_cpu_control cpu_control;
 	process_vect_t proc_vect;
 	process_t proc;
+	struct thread_info *thread = arg;
 
 	printf("PID of this process: %d\n", getpid());
 	printf("The ID of this thread is: %u\n", (unsigned int)pthread_self());
 
 	process_init(&proc);
+	VECT_APPEND(&proc.argv, "-a");
+	VECT_INIT(&proc_vect);
 	VECT_APPEND(&proc_vect, proc);
 
 	EXPECT(!log_header_init(&proc_vect, &header));
@@ -199,8 +205,7 @@ static void *wrapped_start_routine(void *arg)
         /* Start the performance counters */
         EXPECT(!perfctr_init(fd, &cpu_control));
 
-	real_ret = real_start_routine(arg);
-
+	real_ret = (*thread->routine)(thread->arg);
 	EXPECT(!process_read_counter_all(&proc_vect, &event));
         EXPECT(log_write_event(&log, &event) == LOG_ERROR_OK);
 
@@ -212,6 +217,9 @@ int pthread_create(pthread_t *newthread,
                    void *(*start_routine) (void *),
                    void *arg)
 {
+	int ret;
+	struct thread_info *thread;
+	EXPECT((thread = malloc(sizeof*thread)));
 
         load_functions();
 
@@ -220,8 +228,13 @@ int pthread_create(pthread_t *newthread,
                 setup();
         }
 
-	real_start_routine = start_routine;
-        return real_pthread_create(newthread, attr, wrapped_start_routine, arg);
+	thread->routine = start_routine;
+	thread->arg = arg;
+
+	ret = real_pthread_create(newthread, attr, wrapped_start_routine, thread);
+	//free(thread); // seg fault
+
+        return ret;
 }
 
 

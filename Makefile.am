@@ -27,6 +27,7 @@ lib_LTLIBRARIES = libpreprof.la
 libpreprof_la_SOURCES = \
 	preprof.c \
 	utils.c \
+	log.c \
 	process.c
 libpreprof_la_LDFLAGS = \
 	-avoid-version \
@@ -37,6 +38,9 @@ libpreprof_la_LDFLAGS = \
 libpreprof_la_LIBADD = \
 	$(PTHREAD_LIBS) \
 	-lrt \
+	-lmhash \
+	-lbz2 \
+	-lperfctr \
 	-ldl
 libpreprof_la_CFLAGS = \
 	$(PTHREAD_CFLAGS) \

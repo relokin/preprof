@@ -18,7 +18,7 @@
 # You should have received a copy of the GNU Lesser General Public
 # License along with mutrace. If not, see <http://www.gnu.org/licenses/>.
 
-AC_PREREQ([2.68])
+AC_PREREQ([2.64])
 
 AC_INIT([mutrace], [0.2], [mzzhgenpr (at) 0pointer (dot) net])
 AC_CONFIG_SRCDIR([preprof.c])
