@@ -1,5 +1,3 @@
-#include "config.h"
-
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -121,7 +119,7 @@ static void setup(void)
 
         initialized = true;
 
-        fprintf(stderr, "mutrace: "PACKAGE_VERSION" successfully initialized"
+        fprintf(stderr, "preprof: successfully initialized"
 		" for process %s (PID: %lu).\n", get_prname(),
 		(unsigned long) getpid());
 }
