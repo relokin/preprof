@@ -12,6 +12,7 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/prctl.h>
+#include <sys/syscall.h>
 
 #include "utils.h"
 #include "log.h"
@@ -50,7 +51,7 @@ log_t plog;
 process_vect_t proc_vect;
 
 static void setup(void) __attribute ((constructor));
-//static void shutdown(void) __attribute ((destructor));
+static void shutdown(void) __attribute ((destructor));
 
 static const char *
 get_prname(void) {
@@ -138,8 +139,6 @@ setup(void)
 {
 	int i;
 	char *e, temp[100];
-	process_t proc;
-	log_header_t header;
 
 	load_functions();
 
@@ -149,8 +148,10 @@ setup(void)
 	if (!(e = getenv("PREPROF_CMD")))
 		fprintf(stderr, "preprof: WARNING: Failed to parse"
 			" $PREPROF_CMD.\n");
-	else
+	else {
 		opt_cmd = e;
+		printf("Executing cmd \"%s\"\n", opt_cmd);
+	}
 
 	e = opt_log_filename;
 	if ((e = getenv("PREPROF_FILE")))
@@ -161,8 +162,10 @@ setup(void)
 
 	for (i = 0; i < PERFCTR_CNT; i++) {
 		snprintf(temp, 100, "PREPROF_EVENT%d", i);
-		if ((e = getenv(temp)))
+		if ((e = getenv(temp))) {
 			VECT_APPEND(&opt_event_vect, strtoul(e, NULL, 16));
+			printf("PerfCtr event%d=%lx\n", i, strtoul(e, NULL, 16));
+		}
 	}
 
 	if ((e = getenv("PREPROF_OFFCORE_RSP0")))
@@ -174,20 +177,7 @@ setup(void)
 	if ((e = getenv("PREPROF_ICOUNT")))
 		opt_icount = strtoul(e, NULL, 16);
 
-	process_init(&proc);
-	VECT_INIT(&proc.argv);
-	while ((e = strtok(opt_cmd, " ")) != NULL) {
-		VECT_APPEND(&proc.argv, e);
-		opt_cmd = NULL;
-	}
-	VECT_APPEND(&proc.argv, NULL);
-
 	VECT_INIT(&proc_vect);
-	VECT_APPEND(&proc_vect, proc);
-
-	EXPECT_EXIT(!log_header_init(&proc_vect, &header));
-	EXPECT_EXIT(log_create(&plog, &header, opt_log_filename) == LOG_ERROR_OK);
-
 	fprintf(stderr, "preprof: successfully initialized"
 		" for process %s (PID: %lu).\n", get_prname(),
 		(unsigned long) getpid());
@@ -238,25 +228,37 @@ struct thread_info {
 
 };
 
-
 static void *
 wrapped_start_routine(void *arg)
 {
-	int fd;
 	void *real_ret;
-	log_event_t event;
-	struct perfctr_cpu_control cpu_control;
+	process_t _proc, *proc;
+	char *e, *cmd, *cmd_r;
 	struct thread_info *thread = arg;
+	//pid_t tid = (pid_t)syscall(SYS_gettid);
 
-	EXPECT_RET((fd = perfctr_open()) != -1, NULL);
+	process_init(&_proc);
+	VECT_APPEND(&proc_vect, _proc);
+	proc = &VECT_LAST(&proc_vect);
+
+	/* Save command line for the header of the log file */
+	cmd = strdup(opt_cmd);
+	VECT_INIT(&proc->argv);
+	do {
+		e = strtok_r(cmd, " ", &cmd_r);
+		VECT_APPEND(&proc->argv, e);
+		cmd = NULL;
+	} while (e != NULL);
+
+	EXPECT_RET((proc->perf_fd = perfctr_open()) != -1, NULL);
 	/* Start the performance counters */
-	perfctr_control_init(&cpu_control, &opt_event_vect,
+	perfctr_control_init(&proc->cpu_control, &opt_event_vect,
 			     opt_offcore_rsp0, opt_ievent, opt_icount);
-	EXPECT_RET(!perfctr_init(fd, &cpu_control), NULL);
+	EXPECT_RET(!perfctr_init(proc->perf_fd, &proc->cpu_control), NULL);
 
 	real_ret = (*thread->routine)(thread->arg);
-	EXPECT_RET(!process_read_counter_all(&proc_vect, &event), NULL);
-	EXPECT_RET(log_write_event(&plog, &event) == LOG_ERROR_OK, NULL);
+
+	proc->state = EXITED;
 
 	return real_ret;
 }
@@ -268,7 +270,7 @@ int pthread_create(pthread_t *newthread,
 {
 	int ret;
 	struct thread_info *thread;
-	EXPECT((thread = malloc(sizeof*thread)) != NULL);
+	EXPECT((thread = malloc(sizeof*thread)) != NULL); /* LEAKS */
 
 	load_functions();
 
@@ -282,7 +284,20 @@ int pthread_create(pthread_t *newthread,
 	thread->arg = arg;
 
 	ret = real_pthread_create(newthread, attr, wrapped_start_routine, thread);
-	//free(thread); // seg fault
 
 	return ret;
+}
+
+
+static void
+shutdown(void)
+{
+	log_event_t event;
+	log_header_t header;
+
+	EXPECT_EXIT(!log_header_init(&proc_vect, &header));
+	EXPECT_EXIT(log_create(&plog, &header, opt_log_filename) == LOG_ERROR_OK);
+
+	EXPECT_EXIT(!process_read_counter_all(&proc_vect, &event));
+	EXPECT_EXIT(log_write_event(&plog, &event) == LOG_ERROR_OK);
 }
