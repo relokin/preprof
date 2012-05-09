@@ -16,7 +16,7 @@ CFLAGS=$(WARN) -pthread -g -std=gnu99 $(INCLUDES) -O0 -ffast-math \
      -Wp,-D_FORTIFY_SOURCE=2 -fno-common -fdiagnostics-show-option \
      -fno-omit-frame-pointer -MD -MP -fPIC
 
-LDFLAGS += -shared -ldl -lm -lpthread -lbz2 -lmhash
+LDFLAGS += -shared -ldl -lm -lpthread -lbz2 -lmhash -lperfctr
 
 SRC = preprof.c process.c utils.c log.c
 OBJ = preprof.o process.o utils.o log.o
@@ -42,7 +42,7 @@ install: ${LIBS}
 	@echo "Copying the preprof libraries to ${DESTDIR}${PREFIX}/lib/ and the preprof wrapper script to ${DESTDIR}${PREFIX}/bin ..."
 	$(INSTALL) -dm0755 "${DESTDIR}${PREFIX}/lib/"
 	$(INSTALL) -m0644 ${LIBS} "${DESTDIR}${PREFIX}/lib/"
-	$(INSTALL) -Dm0755 preprof.in "${DESTDIR}${PREFIX}/bin/preprof"
+	$(INSTALL) -Dm0755 preprof.sh "${DESTDIR}${PREFIX}/bin/"
 
 uninstall:
 	for f in ${LIBS}; do rm -f "${DESTDIR}${PREFIX}/lib/$$f"; done
