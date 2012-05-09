@@ -50,11 +50,11 @@ process_launch(process_t *p)
             EXPECT(!utils_setnumanode(p->node));
 
         if (p->stdin)
-            EXPECT(freopen(p->stdin, "r", stdin));
+            EXPECT(freopen(p->stdin, "r", stdin) != NULL);
         if (p->stdout)
-            EXPECT(freopen(p->stdout, "w+", stdin));
+            EXPECT(freopen(p->stdout, "w+", stdin) != NULL);
         if (p->stderr)
-            EXPECT(freopen(p->stderr, "w+", stdin));
+            EXPECT(freopen(p->stderr, "w+", stdin) != NULL);
 
         if (strlen(p->allowed_colors))
             EXPECT(!color_set(getpid(), p->allowed_colors));
@@ -148,10 +148,9 @@ ALL_FUNC_DEF(kill, NOT_EXITED)
 int
 process_wait(process_t *p, process_wait_state_t *state)
 {
-    pid_t pid;
     int status;
 
-    pid = waitpid(p->pid, &status, 0);
+    waitpid(p->pid, &status, 0);
     EXPECT(WIFEXITED(status) || WIFSTOPPED(status));
 
     if (WIFEXITED(status))
@@ -248,10 +247,10 @@ process_read_counter(process_t *p, log_pmc_t *pmc)
 int
 process_read_counter_all(process_vect_t *pv, log_event_t *event)
 {
-    memset(event, 0, sizeof *event);
-
     int i = 0;
     process_t *iter;
+
+    memset(event, 0, sizeof *event);
     VECT_FOREACH(pv, iter) {
         EXPECT(i < LOG_MAX_PROCS);
         EXPECT(!process_read_counter(iter, &event->pmc[i++]));

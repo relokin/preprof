@@ -16,7 +16,8 @@
     }                           \
 } while (0)
 
-#define EXPECT(__c)         _EXPECT(__c, return -1)
-#define EXPECT_EXIT(__c)    _EXPECT(__c, exit(EXIT_FAILURE))
+#define EXPECT(__c)          _EXPECT(__c, return -1)
+#define EXPECT_RET(__c, val) _EXPECT(__c, return val)
+#define EXPECT_EXIT(__c)     _EXPECT(__c, exit(EXIT_FAILURE))
 
 #endif /* __EXPECT_H */

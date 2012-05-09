@@ -70,7 +70,7 @@ bzip2_fini(log_t *log)
 }
 
 static log_error_t
-bzip2_read(log_t *log, void *buf, size_t count)
+bzip2_read(log_t *log, void *buf, int count)
 {
     int bzerror;
     int read;

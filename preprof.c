@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -21,13 +23,6 @@
 #error "This stuff only works on Linux!"
 #endif
 
-
-#if defined(__i386__) || defined(__x86_64__)
-#define DEBUG_TRAP __asm__("int $3")
-#else
-#define DEBUG_TRAP raise(SIGTRAP)
-#endif
-
 #define LIKELY(x) (__builtin_expect(!!(x),1))
 #define UNLIKELY(x) (__builtin_expect(!!(x),0))
 
@@ -35,19 +30,16 @@ static int (*real_pthread_create)(pthread_t *newthread,
 				  const pthread_attr_t *attr,
 				  void *(*start_routine) (void *),
 				  void *arg) = NULL;
-static void (*real_exit)(int status) __attribute__((noreturn)) = NULL;
-static void (*real__exit)(int status) __attribute__((noreturn)) = NULL;
-static void (*real__Exit)(int status) __attribute__((noreturn)) = NULL;
-
 
 static __thread bool recursive = false;
 
 static volatile bool initialized = false;
 static volatile bool threads_existing = false;
-char *log_filename;
+static volatile bool run_one_thread = false;
+static char *log_filename;
 
 static void setup(void) __attribute ((constructor));
-static void shutdown(void) __attribute ((destructor));
+//static void shutdown(void) __attribute ((destructor));
 
 static const char *get_prname(void) {
         static char prname[17];
@@ -86,10 +78,6 @@ static void load_functions(void)
 
         LOAD_FUNC(pthread_create);
 
-        LOAD_FUNC(exit);
-        LOAD_FUNC(_exit);
-        LOAD_FUNC(_Exit);
-
         loaded = true;
         recursive = false;
 }
@@ -100,15 +88,8 @@ static void setup(void)
 
         load_functions();
 
-        if (LIKELY(initialized))
+	if (!__sync_bool_compare_and_swap(&initialized, false, true))
                 return;
-
-        if (!dlsym(NULL, "main"))
-                fprintf(stderr, "mutrace: Application appears to be compiled"
-			" without -rdynamic. It might be a\n"
-                        "mutrace: good idea to recompile with -rdynamic enabled"
-			" since this produces more\n"
-                        "mutrace: useful stack traces.\n\n");
 
 	e = log_filename;
         if (!(e = getenv("PREPROF_FILE")))
@@ -117,58 +98,55 @@ static void setup(void)
 	else
 		log_filename = e;
 
-        initialized = true;
-
         fprintf(stderr, "preprof: successfully initialized"
 		" for process %s (PID: %lu).\n", get_prname(),
 		(unsigned long) getpid());
 }
 
-static int
-_log_header_init(process_t *p, log_header_process_t *h)
-{
-    utils_md5hash_t md5hash;
-    int i = 0;
-    char **iter;
+/* static int _log_header_init(process_t *p, log_header_process_t *h) */
+/* { */
+/* 	utils_md5hash_t md5hash; */
+/* 	int i = 0; */
+/* 	char **iter; */
 
-    h->core = p->core;
-    h->node = p->node;
+/* 	h->core = p->core; */
+/* 	h->node = p->node; */
 
-    VECT_FOREACH(&p->argv, iter) {
-        if (i > LOG_MAX_ARGC || *iter == NULL)
-            break;
-        memcpy(h->argv[i++], *iter, LOG_MAX_ARG_LEN);
-    }
-    h->argc = i;
+/* 	VECT_FOREACH(&p->argv, iter) { */
+/* 		if (i > LOG_MAX_ARGC || *iter == NULL) */
+/* 			break; */
+/* 		memcpy(h->argv[i++], *iter, LOG_MAX_ARG_LEN); */
+/* 	} */
+/* 	h->argc = i; */
 
-    memcpy(h->allowed_colors, p->allowed_colors, CC_MASK_LEN);
+/* 	memcpy(h->allowed_colors, p->allowed_colors, CC_MASK_LEN); */
 
-    //EXPECT(!utils_md5(VECT_ELEM(&p->argv, 0), md5hash));
-    memcpy(&h->md5hash, md5hash, sizeof(md5hash));
+/* 	EXPECT(!utils_md5(VECT_ELEM(&p->argv, 0), md5hash)); */
+/* 	memcpy(&h->md5hash, md5hash, sizeof(md5hash)); */
 
-    h->pmc_map.counters = p->cpu_control.nractrs + p->cpu_control.nrictrs;
-    h->pmc_map.offcore_rsp0 = p->cpu_control.nhlm.offcore_rsp[0];
-    h->pmc_map.ireset = p->cpu_control.ireset[h->pmc_map.counters];
-    for (i = 0; i < (int)h->pmc_map.counters && i < LOG_MAX_CTRS; i++)
-        h->pmc_map.eventsel_map[i] = p->cpu_control.evntsel[i];
+/* 	h->pmc_map.counters = p->cpu_control.nractrs + p->cpu_control.nrictrs; */
+/* 	h->pmc_map.offcore_rsp0 = p->cpu_control.nhlm.offcore_rsp[0]; */
+/* 	h->pmc_map.ireset = p->cpu_control.ireset[h->pmc_map.counters]; */
+/* 	for (i = 0; i < (int)h->pmc_map.counters && i < LOG_MAX_CTRS; i++) */
+/* 		h->pmc_map.eventsel_map[i] = p->cpu_control.evntsel[i]; */
 
-    return 0;
-}
+/* 	return 0; */
+/* } */
 
 static int
 log_header_init(process_vect_t *pv, log_header_t *h)
 {
-    int i = 0;
-    process_t *iter;
+	int i = 0;
+	/* process_t *iter; */
 
-    memset(h, 0, sizeof *h);
-    h->version = LOG_VERSION_CURRENT;
+	memset(h, 0, sizeof *h);
+	h->version = LOG_VERSION_CURRENT;
 
-//    VECT_FOREACH(pv, iter)
-    //       EXPECT(!_log_header_init(iter, &h->processes[i++]));
-    h->num_processes = i;
+	/* VECT_FOREACH(pv, iter) */
+	/* 	EXPECT(!_log_header_init(iter, &h->processes[i++])); */
+	h->num_processes = i;
 
-    return 0;
+	return 0;
 }
 
 struct thread_info {
@@ -188,24 +166,21 @@ static void *wrapped_start_routine(void *arg)
 	process_t proc;
 	struct thread_info *thread = arg;
 
-	printf("PID of this process: %d\n", getpid());
-	printf("The ID of this thread is: %u\n", (unsigned int)pthread_self());
-
 	process_init(&proc);
 	VECT_APPEND(&proc.argv, "-a");
 	VECT_INIT(&proc_vect);
 	VECT_APPEND(&proc_vect, proc);
 
-	EXPECT(!log_header_init(&proc_vect, &header));
-	EXPECT(log_create(&log, &header, log_filename) == LOG_ERROR_OK);
+	EXPECT_RET(!log_header_init(&proc_vect, &header), NULL);
+	EXPECT_RET(log_create(&log, &header, log_filename)==LOG_ERROR_OK, NULL);
 
-	EXPECT((fd = perfctr_open()) != -1);
+	EXPECT_RET((fd = perfctr_open()) != -1, NULL);
         /* Start the performance counters */
-        EXPECT(!perfctr_init(fd, &cpu_control));
+        EXPECT_RET(!perfctr_init(fd, &cpu_control), NULL);
 
 	real_ret = (*thread->routine)(thread->arg);
-	EXPECT(!process_read_counter_all(&proc_vect, &event));
-        EXPECT(log_write_event(&log, &event) == LOG_ERROR_OK);
+	EXPECT_RET(!process_read_counter_all(&proc_vect, &event), NULL);
+        EXPECT_RET(log_write_event(&log, &event) == LOG_ERROR_OK, NULL);
 
 	return real_ret;
 }
@@ -217,14 +192,15 @@ int pthread_create(pthread_t *newthread,
 {
 	int ret;
 	struct thread_info *thread;
-	EXPECT((thread = malloc(sizeof*thread)));
+	EXPECT((thread = malloc(sizeof*thread)) != NULL);
 
         load_functions();
 
-        if (UNLIKELY(!threads_existing)) {
-                threads_existing = true;
+	if (!__sync_bool_compare_and_swap(&threads_existing, false, true)) {
+		if (run_one_thread)
+			return 0;
+	} else
                 setup();
-        }
 
 	thread->routine = start_routine;
 	thread->arg = arg;
@@ -233,28 +209,4 @@ int pthread_create(pthread_t *newthread,
 	//free(thread); // seg fault
 
         return ret;
-}
-
-
-static void shutdown(void)
-{
-//        show_summary();
-}
-
-void exit(int status)
-{
-//        show_summary();
-        real_exit(status);
-}
-
-void _exit(int status)
-{
-//        show_summary();
-        real_exit(status);
-}
-
-void _Exit(int status)
-{
-//        show_summary();
-        real__Exit(status);
 }

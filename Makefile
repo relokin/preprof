@@ -14,7 +14,7 @@ WARN=-Wall -W -Wextra -Wno-long-long -Winline -Wvla -Wno-overlength-strings \
 
 CFLAGS=$(WARN) -pthread -g -std=gnu99 $(INCLUDES) -O0 -ffast-math \
      -Wp,-D_FORTIFY_SOURCE=2 -fno-common -fdiagnostics-show-option \
-     -fno-omit-frame-pointer -MD -MP -fPIC -D_GNU_SOURCE
+     -fno-omit-frame-pointer -MD -MP -fPIC
 
 LDFLAGS += -shared -ldl -lm -lpthread -lbz2
 
@@ -26,10 +26,10 @@ LIBS = libpreprof.so
 all: ${LIBS}
 
 %.o: %.c
-	${CC} -o $@ -c ${CFLAGS} ${EXTRA_FLAGS} $<
+	@${CC} -o $@ -c ${CFLAGS} ${EXTRA_FLAGS} $<
 
 lib%.so: ${OBJ}
-	${CC} -o $@ -Wl,-soname,$@ $< ${LDFLAGS}
+	@${CC} -o $@ -Wl,-soname,$@ $< ${LDFLAGS}
 
 clean:
 	@rm -f *.o *.d
