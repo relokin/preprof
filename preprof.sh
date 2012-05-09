@@ -12,7 +12,7 @@ debug_info=0
 while : ; do
     case $1 in
         -E|--event)
-            export PREPROF_EVENT_${event_cnt}="$2"
+            export PREPROF_EVENT${event_cnt}="$2"
 	    let event_cnt=${event_cnt}+1
             shift 2
             ;;
