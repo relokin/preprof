@@ -19,6 +19,8 @@
 #include "expect.h"
 #include "external/cclib/cclib.h"
 
+#define PERFCTR_CNT 10
+
 #if !defined (__linux__) || !defined(__GLIBC__)
 #error "This stuff only works on Linux!"
 #endif
@@ -31,176 +33,250 @@ static int (*real_pthread_create)(pthread_t *newthread,
 				  void *(*start_routine) (void *),
 				  void *arg) = NULL;
 
-static __thread bool recursive = false;
-
 static volatile bool initialized = false;
 static volatile bool threads_existing = false;
-static volatile bool run_one_thread = false;
-static char *log_filename;
+
+typedef VECT(unsigned int) event_vect_t;
+
+static bool          opt_one_thread = false;
+static char         *opt_log_filename;
+static char         *opt_cmd;
+static event_vect_t  opt_event_vect = VECT_NULL;
+static unsigned int  opt_offcore_rsp0;
+static unsigned int  opt_ievent;
+static unsigned long opt_icount;
+
+log_t plog;
+process_vect_t proc_vect;
 
 static void setup(void) __attribute ((constructor));
 //static void shutdown(void) __attribute ((destructor));
 
-static const char *get_prname(void) {
-        static char prname[17];
-        int r;
+static const char *
+get_prname(void) {
+	static char prname[17];
+	int r;
 
-        r = prctl(PR_GET_NAME, prname);
-        assert(r == 0);
+	r = prctl(PR_GET_NAME, prname);
+	assert(r == 0);
 
-        prname[16] = 0;
+	prname[16] = 0;
 
-        return prname;
+	return prname;
 }
 
 
 #define LOAD_FUNC(name)							\
-        do {								\
-                *(void**) (&real_##name) = dlsym(RTLD_NEXT, #name);	\
-                assert(real_##name);					\
-        } while (false)
+	do {								\
+		*(void**) (&real_##name) = dlsym(RTLD_NEXT, #name);	\
+		assert(real_##name);					\
+	} while (false)
 
-static void load_functions(void)
+static void
+load_functions(void)
 {
-        static volatile bool loaded = false;
+	static volatile bool loaded = false;
 
-        if (LIKELY(loaded))
-                return;
+	if (LIKELY(loaded))
+		return;
 
-        recursive = true;
+	LOAD_FUNC(pthread_create);
 
-        /* If someone uses a shared library constructor that is called
-         * before ours we might not be initialized yet when the first
-         * lock related operation is executed. To deal with this we'll
-         * simply call the original implementation and do nothing
-         * else, but for that we do need the original function
-         * pointers. */
-
-        LOAD_FUNC(pthread_create);
-
-        loaded = true;
-        recursive = false;
+	loaded = true;
 }
 
-static void setup(void)
+static int
+_log_header_init(process_t *p, log_header_process_t *h)
 {
-        char *e;
+	utils_md5hash_t md5hash;
+	int i = 0;
+	char **iter;
 
-        load_functions();
+	h->core = p->core;
+	h->node = p->node;
 
-	if (!__sync_bool_compare_and_swap(&initialized, false, true))
-                return;
+	VECT_FOREACH(&p->argv, iter) {
+		if (i > LOG_MAX_ARGC || *iter == NULL)
+			break;
+		strncpy(h->argv[i++], *iter, LOG_MAX_ARG_LEN);
+	}
+	h->argc = i;
 
-	e = log_filename;
-        if (!(e = getenv("PREPROF_FILE")))
-                fprintf(stderr, "preprof: WARNING: Failed to parse"
-			" $PREPROF_FILE.\n");
-	else
-		log_filename = e;
+	memcpy(h->allowed_colors, p->allowed_colors, CC_MASK_LEN);
 
-        fprintf(stderr, "preprof: successfully initialized"
-		" for process %s (PID: %lu).\n", get_prname(),
-		(unsigned long) getpid());
+	EXPECT(!utils_md5(VECT_ELEM(&p->argv, 0), md5hash));
+	memcpy(&h->md5hash, md5hash, sizeof(md5hash));
+
+	h->pmc_map.counters = p->cpu_control.nractrs + p->cpu_control.nrictrs;
+	h->pmc_map.offcore_rsp0 = p->cpu_control.nhlm.offcore_rsp[0];
+	h->pmc_map.ireset = p->cpu_control.ireset[h->pmc_map.counters];
+	for (i = 0; i < (int)h->pmc_map.counters && i < LOG_MAX_CTRS; i++)
+		h->pmc_map.eventsel_map[i] = p->cpu_control.evntsel[i];
+
+	return 0;
 }
-
-/* static int _log_header_init(process_t *p, log_header_process_t *h) */
-/* { */
-/* 	utils_md5hash_t md5hash; */
-/* 	int i = 0; */
-/* 	char **iter; */
-
-/* 	h->core = p->core; */
-/* 	h->node = p->node; */
-
-/* 	VECT_FOREACH(&p->argv, iter) { */
-/* 		if (i > LOG_MAX_ARGC || *iter == NULL) */
-/* 			break; */
-/* 		memcpy(h->argv[i++], *iter, LOG_MAX_ARG_LEN); */
-/* 	} */
-/* 	h->argc = i; */
-
-/* 	memcpy(h->allowed_colors, p->allowed_colors, CC_MASK_LEN); */
-
-/* 	EXPECT(!utils_md5(VECT_ELEM(&p->argv, 0), md5hash)); */
-/* 	memcpy(&h->md5hash, md5hash, sizeof(md5hash)); */
-
-/* 	h->pmc_map.counters = p->cpu_control.nractrs + p->cpu_control.nrictrs; */
-/* 	h->pmc_map.offcore_rsp0 = p->cpu_control.nhlm.offcore_rsp[0]; */
-/* 	h->pmc_map.ireset = p->cpu_control.ireset[h->pmc_map.counters]; */
-/* 	for (i = 0; i < (int)h->pmc_map.counters && i < LOG_MAX_CTRS; i++) */
-/* 		h->pmc_map.eventsel_map[i] = p->cpu_control.evntsel[i]; */
-
-/* 	return 0; */
-/* } */
 
 static int
 log_header_init(process_vect_t *pv, log_header_t *h)
 {
 	int i = 0;
-	/* process_t *iter; */
+	process_t *iter;
 
 	memset(h, 0, sizeof *h);
 	h->version = LOG_VERSION_CURRENT;
 
-	/* VECT_FOREACH(pv, iter) */
-	/* 	EXPECT(!_log_header_init(iter, &h->processes[i++])); */
+	VECT_FOREACH(pv, iter)
+		EXPECT(!_log_header_init(iter, &h->processes[i++]));
 	h->num_processes = i;
 
 	return 0;
 }
 
-struct thread_info {
-	void *(*routine) (void *);
-	void *arg;
-};
 
-static void *wrapped_start_routine(void *arg)
+static void
+setup(void)
 {
-	int fd;
-	void *real_ret;
-	log_t log;
-	log_header_t header;
-	log_event_t event;
-	struct perfctr_cpu_control cpu_control;
-	process_vect_t proc_vect;
+	int i;
+	char *e, temp[100];
 	process_t proc;
-	struct thread_info *thread = arg;
+	log_header_t header;
+
+	load_functions();
+
+	if (!__sync_bool_compare_and_swap(&initialized, false, true))
+		return;
+
+	if (!(e = getenv("PREPROF_CMD")))
+		fprintf(stderr, "preprof: WARNING: Failed to parse"
+			" $PREPROF_CMD.\n");
+	else
+		opt_cmd = e;
+
+	e = opt_log_filename;
+	if ((e = getenv("PREPROF_FILE")))
+		opt_log_filename = e;
+
+	if ((e = getenv("PREPROF_RUN_ONE_THREAD")))
+		opt_one_thread = true;
+
+	for (i = 0; i < PERFCTR_CNT; i++) {
+		snprintf(temp, 100, "PREPROF_EVENT%d", i);
+		if ((e = getenv(temp)))
+			VECT_APPEND(&opt_event_vect, strtoul(e, NULL, 16));
+	}
+
+	if ((e = getenv("PREPROF_OFFCORE_RSP0")))
+		opt_offcore_rsp0 = strtoul(e, NULL, 16);
+
+	if ((e = getenv("PREPROF_IEVENT")))
+		opt_ievent = strtoul(e, NULL, 16);
+
+	if ((e = getenv("PREPROF_ICOUNT")))
+		opt_icount = strtoul(e, NULL, 16);
 
 	process_init(&proc);
-	VECT_APPEND(&proc.argv, "-a");
+	VECT_INIT(&proc.argv);
+	while ((e = strtok(opt_cmd, " ")) != NULL) {
+		VECT_APPEND(&proc.argv, e);
+		opt_cmd = NULL;
+	}
+	VECT_APPEND(&proc.argv, NULL);
+
 	VECT_INIT(&proc_vect);
 	VECT_APPEND(&proc_vect, proc);
 
-	EXPECT_RET(!log_header_init(&proc_vect, &header), NULL);
-	EXPECT_RET(log_create(&log, &header, log_filename)==LOG_ERROR_OK, NULL);
+	EXPECT_EXIT(!log_header_init(&proc_vect, &header));
+	EXPECT_EXIT(log_create(&plog, &header, opt_log_filename) == LOG_ERROR_OK);
+
+	fprintf(stderr, "preprof: successfully initialized"
+		" for process %s (PID: %lu).\n", get_prname(),
+		(unsigned long) getpid());
+}
+
+
+static void
+perfctr_control_init(struct perfctr_cpu_control *ctrl,
+		     event_vect_t *event_vect,
+		     unsigned int offcore_rsp0,
+		     unsigned int ievent,
+		     unsigned long icount)
+{
+	int idx = 0;
+
+	memset(ctrl, 0, sizeof *ctrl);
+	ctrl->tsc_on = 1;
+	ctrl->nractrs = 0;
+	ctrl->nrictrs = 0;
+
+	unsigned int *iter;
+	VECT_FOREACH(event_vect, iter) {
+		ctrl->pmc_map[idx] = idx;
+		ctrl->evntsel[idx] = *iter;
+		++idx;
+	}
+	if (offcore_rsp0) {
+		ctrl->pmc_map[idx] = idx;
+		ctrl->evntsel[idx] = 0x4101b7; /* offcore_rsp0 event code */
+		ctrl->nhlm.offcore_rsp[0] = offcore_rsp0;
+		++idx;
+	}
+	ctrl->nractrs = idx;
+
+	if (ievent) {
+		ctrl->pmc_map[idx] = idx;
+		ctrl->evntsel[idx] = ievent;
+		ctrl->ireset[idx] = icount;
+		ctrl->nrictrs = 1;
+		++idx;
+	}
+}
+
+
+struct thread_info {
+	void *(*routine) (void *);
+	void *arg;
+
+};
+
+
+static void *
+wrapped_start_routine(void *arg)
+{
+	int fd;
+	void *real_ret;
+	log_event_t event;
+	struct perfctr_cpu_control cpu_control;
+	struct thread_info *thread = arg;
 
 	EXPECT_RET((fd = perfctr_open()) != -1, NULL);
-        /* Start the performance counters */
-        EXPECT_RET(!perfctr_init(fd, &cpu_control), NULL);
+	/* Start the performance counters */
+	perfctr_control_init(&cpu_control, &opt_event_vect,
+			     opt_offcore_rsp0, opt_ievent, opt_icount);
+	EXPECT_RET(!perfctr_init(fd, &cpu_control), NULL);
 
 	real_ret = (*thread->routine)(thread->arg);
 	EXPECT_RET(!process_read_counter_all(&proc_vect, &event), NULL);
-        EXPECT_RET(log_write_event(&log, &event) == LOG_ERROR_OK, NULL);
+	EXPECT_RET(log_write_event(&plog, &event) == LOG_ERROR_OK, NULL);
 
 	return real_ret;
 }
 
 int pthread_create(pthread_t *newthread,
-                   const pthread_attr_t *attr,
-                   void *(*start_routine) (void *),
-                   void *arg)
+		   const pthread_attr_t *attr,
+		   void *(*start_routine) (void *),
+		   void *arg)
 {
 	int ret;
 	struct thread_info *thread;
 	EXPECT((thread = malloc(sizeof*thread)) != NULL);
 
-        load_functions();
+	load_functions();
 
 	if (!__sync_bool_compare_and_swap(&threads_existing, false, true)) {
-		if (run_one_thread)
+		if (opt_one_thread)
 			return 0;
 	} else
-                setup();
+		setup();
 
 	thread->routine = start_routine;
 	thread->arg = arg;
@@ -208,5 +284,5 @@ int pthread_create(pthread_t *newthread,
 	ret = real_pthread_create(newthread, attr, wrapped_start_routine, thread);
 	//free(thread); // seg fault
 
-        return ret;
+	return ret;
 }

@@ -16,7 +16,7 @@ CFLAGS=$(WARN) -pthread -g -std=gnu99 $(INCLUDES) -O0 -ffast-math \
      -Wp,-D_FORTIFY_SOURCE=2 -fno-common -fdiagnostics-show-option \
      -fno-omit-frame-pointer -MD -MP -fPIC
 
-LDFLAGS += -shared -ldl -lm -lpthread -lbz2
+LDFLAGS += -shared -ldl -lm -lpthread -lbz2 -lmhash
 
 SRC = preprof.c process.c utils.c log.c
 OBJ = preprof.o process.o utils.o log.o
@@ -29,7 +29,7 @@ all: ${LIBS}
 	@${CC} -o $@ -c ${CFLAGS} ${EXTRA_FLAGS} $<
 
 lib%.so: ${OBJ}
-	@${CC} -o $@ -Wl,-soname,$@ $< ${LDFLAGS}
+	@${CC} -o $@ -Wl,-soname,$@ $^ ${LDFLAGS}
 
 clean:
 	@rm -f *.o *.d
