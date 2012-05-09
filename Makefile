@@ -7,11 +7,11 @@ WARN=-Wall -W -Wextra -Wno-long-long -Winline -Wvla -Wno-overlength-strings \
      -Wunsafe-loop-optimizations -Wundef -Wformat=2 -Wlogical-op            \
      -Wsign-compare -Wformat-security -Wmissing-include-dirs                \
      -Wformat-nonliteral -Wold-style-definition -Wpointer-arith             \
-     -Winit-self -Wdeclaration-after-statement -Wfloat-equal                \
-     -Wmissing-prototypes -Wstrict-prototypes -Wredundant-decls             \
-     -Wmissing-declarations -Wmissing-noreturn -Wshadow -Wendif-labels      \
-     -Wcast-align -Wwrite-strings -Wno-unused-parameter -Wno-strict-aliasing
-
+     -Winit-self -Wfloat-equal -Wmissing-prototypes -Wstrict-prototypes     \
+     -Wredundant-decls -Wmissing-declarations -Wmissing-noreturn -Wshadow   \
+     -Wendif-labels -Wcast-align -Wwrite-strings -Wno-unused-parameter      \
+     -Wno-strict-aliasing
+# -Wdeclaration-after-statement
 CFLAGS=$(WARN) -pthread -g -std=gnu99 $(INCLUDES) -O0 -ffast-math \
      -Wp,-D_FORTIFY_SOURCE=2 -fno-common -fdiagnostics-show-option \
      -fno-omit-frame-pointer -MD -MP -fPIC

@@ -1,5 +1,7 @@
 *~
 *.o
 *.d
+.\#*
+\#*
 
 libpreprof.so
