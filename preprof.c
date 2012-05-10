@@ -33,9 +33,11 @@ static int (*real_pthread_create)(pthread_t *newthread,
 				  const pthread_attr_t *attr,
 				  void *(*start_routine) (void *),
 				  void *arg) = NULL;
+static int (*real_pthread_join)(pthread_t thread, void **retval) = NULL;
 
 static volatile bool initialized = false;
 static volatile bool threads_existing = false;
+static volatile int nthreads = 0;
 
 typedef VECT(unsigned int) event_vect_t;
 
@@ -82,6 +84,7 @@ load_functions(void)
 		return;
 
 	LOAD_FUNC(pthread_create);
+	LOAD_FUNC(pthread_join);
 
 	loaded = true;
 }
@@ -225,7 +228,7 @@ perfctr_control_init(struct perfctr_cpu_control *ctrl,
 struct thread_info {
 	void *(*routine) (void *);
 	void *arg;
-
+	bool run;
 };
 
 static void *
@@ -256,48 +259,56 @@ wrapped_start_routine(void *arg)
 			     opt_offcore_rsp0, opt_ievent, opt_icount);
 	EXPECT_RET(!perfctr_init(proc->perf_fd, &proc->cpu_control), NULL);
 
-	real_ret = (*thread->routine)(thread->arg);
-
+	if (thread->run)
+		real_ret = (*thread->routine)(thread->arg);
+	else
+		real_ret = NULL;
 	proc->state = EXITED;
 
 	return real_ret;
 }
 
-int pthread_create(pthread_t *newthread,
-		   const pthread_attr_t *attr,
-		   void *(*start_routine) (void *),
-		   void *arg)
+int
+pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
+	       void *(*start_routine) (void *), void *arg)
 {
-	int ret;
 	struct thread_info *thread;
 	EXPECT((thread = malloc(sizeof*thread)) != NULL); /* LEAKS */
 
 	load_functions();
 
+	thread->routine = start_routine;
+	thread->arg = arg;
+	thread->run = true;
 	if (!__sync_bool_compare_and_swap(&threads_existing, false, true)) {
 		if (opt_one_thread)
-			return 0;
+			thread->run = false;
 	} else
 		setup();
 
-	thread->routine = start_routine;
-	thread->arg = arg;
+	__sync_fetch_and_add(&nthreads, 1);
 
-	ret = real_pthread_create(newthread, attr, wrapped_start_routine, thread);
-
-	return ret;
+	return real_pthread_create(newthread, attr, wrapped_start_routine, thread);
 }
 
+int
+pthread_join(pthread_t thread, void **retval)
+{
+	if (!__sync_sub_and_fetch(&nthreads, 1)) {
+		log_event_t event;
+		log_header_t header;
+
+		EXPECT_EXIT(!log_header_init(&proc_vect, &header));
+		EXPECT_EXIT(log_create(&plog, &header, opt_log_filename) == LOG_ERROR_OK);
+
+		EXPECT_EXIT(!process_read_counter_all(&proc_vect, &event));
+		EXPECT_EXIT(log_write_event(&plog, &event) == LOG_ERROR_OK);
+		EXPECT_EXIT(log_close(&plog) == LOG_ERROR_OK);
+	}
+	return real_pthread_join(thread, retval);
+}
 
 static void
 shutdown(void)
 {
-	log_event_t event;
-	log_header_t header;
-
-	EXPECT_EXIT(!log_header_init(&proc_vect, &header));
-	EXPECT_EXIT(log_create(&plog, &header, opt_log_filename) == LOG_ERROR_OK);
-
-	EXPECT_EXIT(!process_read_counter_all(&proc_vect, &event));
-	EXPECT_EXIT(log_write_event(&plog, &event) == LOG_ERROR_OK);
 }
