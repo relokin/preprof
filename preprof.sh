@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if ! TEMP=`getopt -o +E:o:O:I:C: --long event:,out:,one-thread,offcore_rsp0,ievent,icount -n $0 -- "$@"` ; then
+if ! TEMP=`getopt -o +E:o:O:I:C:h --long event:,out:,one-thread,offcore_rsp0,ievent,icount,help -n $0 -- "$@"` ; then
     exit 1
 fi
 
@@ -11,16 +11,21 @@ debug_info=0
 
 while : ; do
     case $1 in
+	-o|--out)
+	    export PREPROF_FILE="$2"
+	    shift 2
+	    ;;
+
+	--one-thread)
+	    export PREPROF_RUN_ONE_THREAD=y
+	    shift 1
+	    ;;
         -E|--event)
             export PREPROF_EVENT${event_cnt}="$2"
 	    let event_cnt=${event_cnt}+1
             shift 2
             ;;
 
-	-o|--out)
-	    export PREPROF_FILE="$2"
-	    shift 2
-	    ;;
 
 	-O|--offcore_rsp0)
 	    export PREPROF_OFFCORE_RSP0="$2"
@@ -47,8 +52,9 @@ COMMANDS:
   -h, --help                      Show this help
 
 OPTIONS:
-  -E, --event                     Count performance counter event
   -o, --out                       Output file name
+      --one-thread                Run only one thread
+  -E, --event                     Count performance counter event
   -O, --offcore_rsp0              Count offcore_rsp0 event
   -I, --ievent                    Log snapshot of all counters on IEVENT
   -C, --icount                    Log snapshot after NUM occurances of IEVENT
