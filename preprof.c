@@ -228,13 +228,13 @@ perfctr_control_init(struct perfctr_cpu_control *ctrl,
 struct thread_info {
 	void *(*routine) (void *);
 	void *arg;
-	bool run;
+	bool master;
 };
 
 static void *
 wrapped_start_routine(void *arg)
 {
-	void *real_ret;
+	void *real_ret = NULL;
 	process_t _proc, *proc;
 	char *e, *cmd, *cmd_r;
 	struct thread_info *thread = arg;
@@ -252,6 +252,7 @@ wrapped_start_routine(void *arg)
 		VECT_APPEND(&proc->argv, e);
 		cmd = NULL;
 	} while (e != NULL);
+	free(cmd); /* strdup returns allocated char[] */
 
 	EXPECT_RET((proc->perf_fd = perfctr_open()) != -1, NULL);
 	/* Start the performance counters */
@@ -259,10 +260,9 @@ wrapped_start_routine(void *arg)
 			     opt_offcore_rsp0, opt_ievent, opt_icount);
 	EXPECT_RET(!perfctr_init(proc->perf_fd, &proc->cpu_control), NULL);
 
-	if (thread->run)
+	if (thread->master)
 		real_ret = (*thread->routine)(thread->arg);
-	else
-		real_ret = NULL;
+
 	proc->state = EXITED;
 
 	return real_ret;
@@ -279,10 +279,10 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
 
 	thread->routine = start_routine;
 	thread->arg = arg;
-	thread->run = true;
+	thread->master = true;
 	if (!__sync_bool_compare_and_swap(&threads_existing, false, true)) {
 		if (opt_one_thread)
-			thread->run = false;
+			thread->master = false;
 	} else
 		setup();
 
