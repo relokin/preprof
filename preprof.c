@@ -51,19 +51,6 @@ static int (*real_pthread_join)(pthread_t thread, void **retval) = NULL;
 static void setup(void) __attribute ((constructor));
 static void shutdown(void) __attribute ((destructor));
 
-static const char *
-get_prname(void)
-{
-	static char prname[17];
-	int r;
-
-	r = prctl(PR_GET_NAME, prname);
-	assert(r == 0);
-
-	prname[16] = 0;
-
-	return prname;
-}
 
 #define LOAD_FUNC(name)							\
 	do {								\
@@ -84,9 +71,10 @@ setup(void)
 	int i;
 	char *e;
         event_vect_t event_vect = VECT_NULL;
-        unsigned int offcore_rsp0;
-        unsigned int ievent;
-        unsigned long icount;
+        unsigned int offcore_rsp0 = 0;
+        unsigned int ievent = 0;
+        unsigned long icount = 0;
+        char *prname = NULL;
 
 	load_functions();
 
@@ -119,11 +107,13 @@ setup(void)
 	if ((e = getenv("PREPROF_ICOUNT")))
 		icount = strtoul(e, NULL, 16);
 
+        if ((e = getenv("_")))
+                prname = e;
+
 	perfctr_control_init(&perf_control, &event_vect, offcore_rsp0, ievent, icount);
 
-	fprintf(stderr, "preprof: successfully initialized"
-		" for process %s (PID: %lu).\n", get_prname(),
-		(unsigned long) getpid());
+	fprintf(stderr, "preprof: successfully initialized %s (PID: %lu).\n",
+                prname ? prname : "", (unsigned long) getpid());
 }
 
 /* XXX Log to stdout for now */
