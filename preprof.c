@@ -43,7 +43,6 @@ static int (*real_pthread_join)(pthread_t thread, void **retval) = NULL;
 
 static volatile int nthreads = 0;
 
-typedef VECT(unsigned int) event_vect_t;
 
 static bool          opt_one_thread = false;
 static char         *opt_log_filename;
@@ -183,43 +182,6 @@ setup(void)
 static void
 shutdown(void)
 {
-}
-
-static void
-perfctr_control_init(struct perfctr_cpu_control *ctrl,
-		     event_vect_t *event_vect,
-		     unsigned int offcore_rsp0,
-		     unsigned int ievent,
-		     unsigned long icount)
-{
-	int idx = 0;
-
-	memset(ctrl, 0, sizeof *ctrl);
-	ctrl->tsc_on = 1;
-	ctrl->nractrs = 0;
-	ctrl->nrictrs = 0;
-
-	unsigned int *iter;
-	VECT_FOREACH(event_vect, iter) {
-		ctrl->pmc_map[idx] = idx;
-		ctrl->evntsel[idx] = *iter;
-		++idx;
-	}
-	if (offcore_rsp0) {
-		ctrl->pmc_map[idx] = idx;
-		ctrl->evntsel[idx] = 0x4101b7; /* offcore_rsp0 event code */
-		ctrl->nhlm.offcore_rsp[0] = offcore_rsp0;
-		++idx;
-	}
-	ctrl->nractrs = idx;
-
-	if (ievent) {
-		ctrl->pmc_map[idx] = idx;
-		ctrl->evntsel[idx] = ievent;
-		ctrl->ireset[idx] = icount;
-		ctrl->nrictrs = 1;
-		++idx;
-	}
 }
 
 static void *
