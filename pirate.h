@@ -2,12 +2,12 @@
 #define _STRESS_H_
 #include <libperfctr.h>
 
-#define STRESS_MAX_PID 4
+#define PIRATE_MAX_PROC 4
 
 typedef struct {
     int processes;
     size_t footprint;
-    int cores[STRESS_MAX_PID];
+    int cores[PIRATE_MAX_PROC];
     int node;
     struct perfctr_cpu_control cpu_control;
 } pirate_conf_t;

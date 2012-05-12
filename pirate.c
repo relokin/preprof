@@ -13,7 +13,7 @@
 #include "utils.h"
 #include "expect.h"
 
-#define MAX_PID STRESS_MAX_PID
+#define MAX_PID PIRATE_MAX_PROC
 
 #define STRIDE 64
 
