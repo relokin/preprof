@@ -15,7 +15,6 @@
 #include <sys/syscall.h>
 
 #include "utils.h"
-#include "process.h"
 #include "expect.h"
 
 #define PERFCTR_CNT 10
@@ -43,8 +42,6 @@ static struct perfctr_cpu_control perf_control;
 
 static bool  opt_one_thread = false;
 static char *opt_cmd;
-
-process_vect_t proc_vect;
 
 static void setup(void) __attribute ((constructor));
 static void shutdown(void) __attribute ((destructor));
@@ -119,7 +116,6 @@ setup(void)
 
 	perfctr_control_init(&perf_control, &event_vect, offcore_rsp0, ievent, icount);
 
-	VECT_INIT(&proc_vect);
 	fprintf(stderr, "preprof: successfully initialized"
 		" for process %s (PID: %lu).\n", get_prname(),
 		(unsigned long) getpid());
@@ -134,21 +130,15 @@ static void *
 wrapped_start_routine(void *arg)
 {
 	void *real_ret = NULL;
-	process_t _proc, *proc;
 	struct thread_info *thread = arg;
-
-	process_init(&_proc);
-	VECT_APPEND(&proc_vect, _proc);
-	proc = &VECT_LAST(&proc_vect);
+        int perf_fd;
 
 	/* Start the performance counters */
-	EXPECT_RET((proc->perf_fd = perfctr_open()) != -1, NULL);
-	EXPECT_RET(!perfctr_init(proc->perf_fd, &perf_control), NULL);
+	EXPECT_RET((perf_fd = perfctr_open()) != -1, NULL);
+	EXPECT_RET(!perfctr_init(perf_fd, &perf_control), NULL);
 
 	if (thread->run_thread)
 		real_ret = (*thread->routine)(thread->arg);
-
-	proc->state = EXITED;
 
 	return real_ret;
 }

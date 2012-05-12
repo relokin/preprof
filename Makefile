@@ -18,8 +18,8 @@ CFLAGS=$(WARN) -pthread -g -std=gnu99 $(INCLUDES) -O0 -ffast-math \
 
 LDFLAGS += -shared -ldl -lm -lpthread -lbz2 -lmhash -lperfctr
 
-SRC = preprof.c process.c utils.c log.c
-OBJ = preprof.o process.o utils.o log.o
+SRC = preprof.c utils.c log.c
+OBJ = preprof.o utils.o log.o
 
 LIBS = libpreprof.so
 
