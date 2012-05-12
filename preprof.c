@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <dlfcn.h>
 
+#include "pirate.h"
 #include "utils.h"
 #include "expect.h"
 
@@ -30,7 +31,8 @@ static VECT(struct thread_info) thread_info_vect = VECT_NULL;
 
 static struct perfctr_cpu_control perf_control;
 
-static bool  opt_one_thread = false;
+static bool opt_one_thread = false;
+static bool opt_pirate = false;
 
 static int (*real_pthread_create)(pthread_t *newthread,
 				  const pthread_attr_t *attr,
@@ -97,27 +99,62 @@ setup(void)
 
 	fprintf(stderr, "preprof: successfully initialized %s (PID: %lu).\n",
                 prname ? prname : "", (unsigned long) getpid());
+
+        /* Initialize pirate */
+        if (opt_pirate) {
+                pirate_conf_t pirate_conf;
+                memset(&pirate_conf, 0, sizeof pirate_conf);
+
+                /* XXX Hardcoded for testing purposes */
+                pirate_conf.processes = 1;
+                pirate_conf.footprint = 4 * (1 << 20);
+
+                /* Hardcoded performance counter */
+                pirate_conf.cpu_control.pmc_map[0] = 0;
+                pirate_conf.cpu_control.evntsel[0] = 0x41010b; // Loads
+
+                pirate_conf.cpu_control.pmc_map[1] = 1;
+                pirate_conf.cpu_control.evntsel[1] = 0x41020b; // Stores
+
+#if 0
+                /* XXX error: 'struct <anonymous>' has no member named 'offcore_rsp0'*/
+                pirate_conf.cpu_control.pmc_map[2] = 2;
+                pirate_conf.cpu_control.evntsel[2] = 0x4101b7;
+                pirate_conf.cpu_control.nhlm.offcore_rsp0[0] = 0xf077; // Fetches
+
+                pirate_conf.cpu_control.nractrs = 3;
+#else
+                pirate_conf.cpu_control.nractrs = 2;
+#endif
+
+                EXPECT_EXIT(!pirate_init(&pirate_conf));
+                EXPECT_EXIT(!pirate_launch());
+        }
 }
 
 /* XXX Log to stdout for now */
 static void
 log_perf_ctrs(struct perfctr_sum_ctrs *ctrs)
 {
-    unsigned int i;
+        unsigned int i;
 
-    printf("\ntsc: %llu\n", ctrs->tsc);
-    for (i = 0; i < perf_control.nractrs; i++)
-        printf("%#x: %llu\n", perf_control.evntsel[i], ctrs->pmc[i]);
+        printf("\ntsc: %llu\n", ctrs->tsc);
+        for (i = 0; i < perf_control.nractrs; i++)
+                printf("%#x: %llu\n", perf_control.evntsel[i], ctrs->pmc[i]);
 }
 
 static void
 shutdown(void)
 {
-    struct thread_info *iter;
-    VECT_FOREACH(&thread_info_vect, iter) {
-        if (iter->run_thread)
-            log_perf_ctrs(&iter->perf_ctrs);
-    }
+        struct thread_info *iter;
+        VECT_FOREACH(&thread_info_vect, iter) {
+                if (iter->run_thread)
+                log_perf_ctrs(&iter->perf_ctrs);
+        }
+
+        /* Finilizing pirate */
+        if (opt_pirate)
+                EXPECT_EXIT(!pirate_fini());
 }
 
 static void *
@@ -155,8 +192,15 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
 	thread.run_thread = true;
         memset(&thread.perf_ctrs, 0, sizeof thread.perf_ctrs);
 		
-        if (!first && opt_one_thread)
-		thread.run_thread = false;
+        if (first) {
+                if (opt_pirate) {
+                        EXPECT(!pirate_warm());
+                        EXPECT(!pirate_cont());
+                }
+        } else {
+                if (opt_one_thread)
+		        thread.run_thread = false;
+        }
         first = 0;
 
         VECT_APPEND(&thread_info_vect, thread);

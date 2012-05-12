@@ -10,11 +10,46 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ptrace.h>
+#include <sys/mman.h>
 #include <sys/user.h>
 #include <numa.h>
 
 #include "utils.h"
 #include "expect.h"
+
+
+#define ROUND_U(x) (((x) + (1 << 21)) & ~((1 << 21) - 1))
+
+
+static char huge_filename[] = "/mnt/hugetlb/monitor.XXXXXX";
+
+static int
+alloc_huge(void **ptr, size_t size)
+{
+    int huge_fd;
+
+    huge_fd = mkstemp(huge_filename);
+    EXPECT(huge_fd);
+
+    *ptr = mmap(0, ROUND_U(size), PROT_READ | PROT_WRITE, MAP_SHARED, huge_fd, 0);
+    return *ptr == MAP_FAILED ? -1 : 0;
+}
+
+void *
+utils_calloc(size_t nmemb, size_t size)
+{
+    void *ptr;
+    EXPECT_RET(alloc_huge(&ptr, nmemb * size) < 0, NULL);
+    memset(ptr, 0, size);
+    return ptr;
+}
+
+void
+utils_free(void *addr, size_t nmemb, size_t size)
+{
+    munmap(addr, ROUND_U(nmemb * size));
+    unlink(huge_filename);
+}
 
 int
 utils_setaffinity(int core)

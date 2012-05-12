@@ -6,6 +6,9 @@
 
 typedef VECT(unsigned int) event_vect_t;
 
+void *utils_calloc(size_t nmemb, size_t size);
+void  utils_free(void *addr, size_t nmemb, size_t size);
+
 int utils_setaffinity(int core);
 int utils_setnumanode(int node);
 
