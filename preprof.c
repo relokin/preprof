@@ -41,7 +41,6 @@ static int (*real_pthread_create)(pthread_t *newthread,
 				  void *arg) = NULL;
 static int (*real_pthread_join)(pthread_t thread, void **retval) = NULL;
 
-static volatile bool threads_existing = false;
 static volatile int nthreads = 0;
 
 typedef VECT(unsigned int) event_vect_t;
@@ -266,14 +265,15 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
 {
 	struct thread_info *thread;
 	EXPECT((thread = malloc(sizeof*thread)) != NULL); /* LEAKS */
+        static int first = 1;
 
 	thread->routine = start_routine;
 	thread->arg = arg;
 	thread->run_thread = true;
-	if (!__sync_bool_compare_and_swap(&threads_existing, false, true)) {
-		if (opt_one_thread)
-			thread->run_thread = false;
-	}
+		
+        if (!first && opt_one_thread)
+		thread->run_thread = false;
+        first = 0;
 
 	__sync_fetch_and_add(&nthreads, 1);
 
