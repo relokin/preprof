@@ -39,7 +39,6 @@ static VECT(struct thread_info) thread_info_vect = VECT_NULL;
 static struct perfctr_cpu_control perf_control;
 
 static bool  opt_one_thread = false;
-static char *opt_cmd;
 
 static int (*real_pthread_create)(pthread_t *newthread,
 				  const pthread_attr_t *attr,
@@ -77,14 +76,6 @@ setup(void)
         char *prname = NULL;
 
 	load_functions();
-
-	if (!(e = getenv("PREPROF_CMD")))
-		fprintf(stderr, "preprof: WARNING: Failed to parse"
-			" $PREPROF_CMD.\n");
-	else {
-		opt_cmd = e;
-		printf("Executing cmd \"%s\"\n", opt_cmd);
-	}
 
 	if ((e = getenv("PREPROF_RUN_ONE_THREAD")))
 		opt_one_thread = true;
