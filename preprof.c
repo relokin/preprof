@@ -30,7 +30,16 @@ struct thread_info {
 	void *(*routine) (void *);
 	void *arg;
 	bool run_thread;
+        struct perfctr_sum_ctrs perf_ctrs;
 };
+
+/* Global variables */
+static VECT(struct thread_info) thread_info_vect = VECT_NULL;
+
+static struct perfctr_cpu_control perf_control;
+
+static bool  opt_one_thread = false;
+static char *opt_cmd;
 
 static int (*real_pthread_create)(pthread_t *newthread,
 				  const pthread_attr_t *attr,
@@ -38,11 +47,7 @@ static int (*real_pthread_create)(pthread_t *newthread,
 				  void *arg) = NULL;
 static int (*real_pthread_join)(pthread_t thread, void **retval) = NULL;
 
-static struct perfctr_cpu_control perf_control;
-
-static bool  opt_one_thread = false;
-static char *opt_cmd;
-
+/* Function declarations */
 static void setup(void) __attribute ((constructor));
 static void shutdown(void) __attribute ((destructor));
 
@@ -143,6 +148,7 @@ wrapped_start_routine(void *arg)
 		real_ret = (*thread->routine)(thread->arg);
 
                 EXPECT_RET(!_vperfctr_read_sum(perf_fd, &ctrs), NULL);
+                thread->perf_ctrs = ctrs;
         }
 
 	return real_ret;
@@ -152,19 +158,21 @@ int
 pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
 	       void *(*start_routine) (void *), void *arg)
 {
-	struct thread_info *thread;
-	EXPECT((thread = malloc(sizeof*thread)) != NULL); /* LEAKS */
+	struct thread_info thread;
         static int first = 1;
 
-	thread->routine = start_routine;
-	thread->arg = arg;
-	thread->run_thread = true;
+	thread.routine = start_routine;
+	thread.arg = arg;
+	thread.run_thread = true;
+        memset(&thread.perf_ctrs, 0, sizeof thread.perf_ctrs);
 		
         if (!first && opt_one_thread)
-		thread->run_thread = false;
+		thread.run_thread = false;
         first = 0;
 
-	return real_pthread_create(newthread, attr, wrapped_start_routine, thread);
+        VECT_APPEND(&thread_info_vect, thread);
+
+	return real_pthread_create(newthread, attr, wrapped_start_routine, &VECT_LAST(&thread_info_vect));
 }
 
 int
