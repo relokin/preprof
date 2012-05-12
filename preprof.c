@@ -3,16 +3,8 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <malloc.h>
 #include <pthread.h>
 #include <dlfcn.h>
-#include <assert.h>
-#include <signal.h>
-#include <string.h>
-#include <errno.h>
-#include <sys/prctl.h>
-#include <sys/syscall.h>
 
 #include "utils.h"
 #include "expect.h"
