@@ -32,7 +32,7 @@
 struct thread_info {
 	void *(*routine) (void *);
 	void *arg;
-	bool master;
+	bool run_thread;
 };
 
 static int (*real_pthread_create)(pthread_t *newthread,
@@ -263,7 +263,7 @@ wrapped_start_routine(void *arg)
 			     opt_offcore_rsp0, opt_ievent, opt_icount);
 	EXPECT_RET(!perfctr_init(proc->perf_fd, &proc->cpu_control), NULL);
 
-	if (thread->master)
+	if (thread->run_thread)
 		real_ret = (*thread->routine)(thread->arg);
 
 	proc->state = EXITED;
@@ -282,10 +282,10 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
 
 	thread->routine = start_routine;
 	thread->arg = arg;
-	thread->master = true;
+	thread->run_thread = true;
 	if (!__sync_bool_compare_and_swap(&threads_existing, false, true)) {
 		if (opt_one_thread)
-			thread->master = false;
+			thread->run_thread = false;
 	} else
 		setup();
 
