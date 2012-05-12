@@ -131,14 +131,19 @@ wrapped_start_routine(void *arg)
 {
 	void *real_ret = NULL;
 	struct thread_info *thread = arg;
-        int perf_fd;
 
-	/* Start the performance counters */
-	EXPECT_RET((perf_fd = perfctr_open()) != -1, NULL);
-	EXPECT_RET(!perfctr_init(perf_fd, &perf_control), NULL);
+	if (thread->run_thread) {
+                int perf_fd;
+                struct perfctr_sum_ctrs ctrs;
 
-	if (thread->run_thread)
+	        /* Start the performance counters */
+	        EXPECT_RET((perf_fd = perfctr_open()) != -1, NULL);
+	        EXPECT_RET(!perfctr_init(perf_fd, &perf_control), NULL);
+
 		real_ret = (*thread->routine)(thread->arg);
+
+                EXPECT_RET(!_vperfctr_read_sum(perf_fd, &ctrs), NULL);
+        }
 
 	return real_ret;
 }
