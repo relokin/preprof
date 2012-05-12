@@ -126,9 +126,25 @@ setup(void)
 		(unsigned long) getpid());
 }
 
+/* XXX Log to stdout for now */
+static void
+log_perf_ctrs(struct perfctr_sum_ctrs *ctrs)
+{
+    unsigned int i;
+
+    printf("\ntsc: %llu\n", ctrs->tsc);
+    for (i = 0; i < perf_control.nractrs; i++)
+        printf("%#x: %llu\n", perf_control.evntsel[i], ctrs->pmc[i]);
+}
+
 static void
 shutdown(void)
 {
+    struct thread_info *iter;
+    VECT_FOREACH(&thread_info_vect, iter) {
+        if (iter->run_thread)
+            log_perf_ctrs(&iter->perf_ctrs);
+    }
 }
 
 static void *
