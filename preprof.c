@@ -39,6 +39,7 @@ static struct perfctr_sum_ctrs pirate_ctrs[PIRATE_MAX_PROC];
 static bool opt_one_thread = false;
 static bool opt_pirate = false;
 static int  opt_pirate_procs = 1;
+static int  opt_pirate_wset;
 
 static int (*real_pthread_create)(pthread_t *newthread,
 				  const pthread_attr_t *attr,
@@ -80,6 +81,12 @@ setup(void)
 	if ((e = getenv("PREPROF_RUN_ONE_THREAD")))
 		opt_one_thread = true;
 
+        if ((e = getenv("PREPROF_PIRATE_WSET"))) {
+                opt_pirate = true;
+                opt_pirate_wset = atoi(e);
+                opt_one_thread = true;
+        }
+
 	for (i = 0; i < PERFCTR_CNT; i++) {
                 char temp[100];
 		snprintf(temp, 100, "PREPROF_EVENT%d", i);
@@ -107,7 +114,7 @@ setup(void)
         if (opt_pirate) {
                 /* XXX Hardcoded for testing purposes */
                 pirate_conf.processes = opt_pirate_procs;
-                pirate_conf.footprint = 4 * (1 << 20);
+                pirate_conf.footprint = opt_pirate_wset;;
 
                 /* Hardcoded performance counter */
                 pirate_conf.cpu_control.tsc_on = 1;
