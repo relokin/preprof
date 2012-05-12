@@ -43,14 +43,11 @@ static int (*real_pthread_join)(pthread_t thread, void **retval) = NULL;
 
 static volatile int nthreads = 0;
 
+static struct perfctr_cpu_control perf_control;
 
-static bool          opt_one_thread = false;
-static char         *opt_log_filename;
-static char         *opt_cmd;
-static event_vect_t  opt_event_vect = VECT_NULL;
-static unsigned int  opt_offcore_rsp0;
-static unsigned int  opt_ievent;
-static unsigned long opt_icount;
+static bool  opt_one_thread = false;
+static char *opt_log_filename;
+static char *opt_cmd;
 
 log_t plog;
 process_vect_t proc_vect;
@@ -107,11 +104,11 @@ _log_header_init(process_t *p, log_header_process_t *h)
 	EXPECT(!utils_md5(VECT_ELEM(&p->argv, 0), md5hash));
 	memcpy(&h->md5hash, md5hash, sizeof(md5hash));
 
-	h->pmc_map.counters = p->cpu_control.nractrs + p->cpu_control.nrictrs;
-	h->pmc_map.offcore_rsp0 = p->cpu_control.nhlm.offcore_rsp[0];
-	h->pmc_map.ireset = p->cpu_control.ireset[h->pmc_map.counters];
+	h->pmc_map.counters = perf_control.nractrs + perf_control.nrictrs;
+	h->pmc_map.offcore_rsp0 = perf_control.nhlm.offcore_rsp[0];
+	h->pmc_map.ireset = perf_control.ireset[h->pmc_map.counters];
 	for (i = 0; i < (int)h->pmc_map.counters && i < LOG_MAX_CTRS; i++)
-		h->pmc_map.eventsel_map[i] = p->cpu_control.evntsel[i];
+		h->pmc_map.eventsel_map[i] = perf_control.evntsel[i];
 
 	return 0;
 }
@@ -137,7 +134,12 @@ static void
 setup(void)
 {
 	int i;
-	char *e, temp[100];
+	char *e;
+        event_vect_t event_vect = VECT_NULL;
+        unsigned int offcore_rsp0;
+        unsigned int ievent;
+        unsigned long icount;
+
 
 	load_functions();
 
@@ -157,21 +159,24 @@ setup(void)
 		opt_one_thread = true;
 
 	for (i = 0; i < PERFCTR_CNT; i++) {
+                char temp[100];
 		snprintf(temp, 100, "PREPROF_EVENT%d", i);
 		if ((e = getenv(temp))) {
-			VECT_APPEND(&opt_event_vect, strtoul(e, NULL, 16));
+			VECT_APPEND(&event_vect, strtoul(e, NULL, 16));
 			printf("PerfCtr event%d=%lx\n", i, strtoul(e, NULL, 16));
 		}
 	}
 
 	if ((e = getenv("PREPROF_OFFCORE_RSP0")))
-		opt_offcore_rsp0 = strtoul(e, NULL, 16);
+		offcore_rsp0 = strtoul(e, NULL, 16);
 
 	if ((e = getenv("PREPROF_IEVENT")))
-		opt_ievent = strtoul(e, NULL, 16);
+		ievent = strtoul(e, NULL, 16);
 
 	if ((e = getenv("PREPROF_ICOUNT")))
-		opt_icount = strtoul(e, NULL, 16);
+		icount = strtoul(e, NULL, 16);
+
+	perfctr_control_init(&perf_control, &event_vect, offcore_rsp0, ievent, icount);
 
 	VECT_INIT(&proc_vect);
 	fprintf(stderr, "preprof: successfully initialized"
@@ -207,11 +212,9 @@ wrapped_start_routine(void *arg)
 	} while (e != NULL);
 	free(cmd); /* strdup returns allocated char[] */
 
-	EXPECT_RET((proc->perf_fd = perfctr_open()) != -1, NULL);
 	/* Start the performance counters */
-	perfctr_control_init(&proc->cpu_control, &opt_event_vect,
-			     opt_offcore_rsp0, opt_ievent, opt_icount);
-	EXPECT_RET(!perfctr_init(proc->perf_fd, &proc->cpu_control), NULL);
+	EXPECT_RET((proc->perf_fd = perfctr_open()) != -1, NULL);
+	EXPECT_RET(!perfctr_init(proc->perf_fd, &perf_control), NULL);
 
 	if (thread->run_thread)
 		real_ret = (*thread->routine)(thread->arg);
