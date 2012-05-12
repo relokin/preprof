@@ -29,6 +29,12 @@
 #define LIKELY(x) (__builtin_expect(!!(x),1))
 #define UNLIKELY(x) (__builtin_expect(!!(x),0))
 
+struct thread_info {
+	void *(*routine) (void *);
+	void *arg;
+	bool master;
+};
+
 static int (*real_pthread_create)(pthread_t *newthread,
 				  const pthread_attr_t *attr,
 				  void *(*start_routine) (void *),
@@ -56,7 +62,8 @@ static void setup(void) __attribute ((constructor));
 static void shutdown(void) __attribute ((destructor));
 
 static const char *
-get_prname(void) {
+get_prname(void)
+{
 	static char prname[17];
 	int r;
 
@@ -67,7 +74,6 @@ get_prname(void) {
 
 	return prname;
 }
-
 
 #define LOAD_FUNC(name)							\
 	do {								\
@@ -186,6 +192,10 @@ setup(void)
 		(unsigned long) getpid());
 }
 
+static void
+shutdown(void)
+{
+}
 
 static void
 perfctr_control_init(struct perfctr_cpu_control *ctrl,
@@ -223,13 +233,6 @@ perfctr_control_init(struct perfctr_cpu_control *ctrl,
 		++idx;
 	}
 }
-
-
-struct thread_info {
-	void *(*routine) (void *);
-	void *arg;
-	bool master;
-};
 
 static void *
 wrapped_start_routine(void *arg)
@@ -306,9 +309,4 @@ pthread_join(pthread_t thread, void **retval)
 		EXPECT_EXIT(log_close(&plog) == LOG_ERROR_OK);
 	}
 	return real_pthread_join(thread, retval);
-}
-
-static void
-shutdown(void)
-{
 }
