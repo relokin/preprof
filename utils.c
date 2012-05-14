@@ -162,39 +162,39 @@ perfctr_resume(int fd)
 
 void
 perfctr_control_init(struct perfctr_cpu_control *ctrl,
-		     event_vect_t *event_vect,
-		     unsigned int offcore_rsp0,
-		     unsigned int ievent,
-		     unsigned long icount)
+        event_vect_t *event_vect,
+        unsigned int offcore_rsp0,
+        unsigned int ievent,
+        unsigned long icount)
 {
-	int idx = 0;
+    int idx = 0;
 
-	memset(ctrl, 0, sizeof *ctrl);
-	ctrl->tsc_on = 1;
-	ctrl->nractrs = 0;
-	ctrl->nrictrs = 0;
+    memset(ctrl, 0, sizeof *ctrl);
+    ctrl->tsc_on = 1;
+    ctrl->nractrs = 0;
+    ctrl->nrictrs = 0;
 
-	unsigned int *iter;
-	VECT_FOREACH(event_vect, iter) {
-		ctrl->pmc_map[idx] = idx;
-		ctrl->evntsel[idx] = *iter;
-		++idx;
-	}
-	if (offcore_rsp0) {
-		ctrl->pmc_map[idx] = idx;
-		ctrl->evntsel[idx] = 0x4101b7; /* offcore_rsp0 event code */
-		ctrl->nhlm.offcore_rsp[0] = offcore_rsp0;
-		++idx;
-	}
-	ctrl->nractrs = idx;
+    unsigned int *iter;
+    VECT_FOREACH(event_vect, iter) {
+        ctrl->pmc_map[idx] = idx;
+        ctrl->evntsel[idx] = *iter;
+        ++idx;
+    }
+    if (offcore_rsp0) {
+        ctrl->pmc_map[idx] = idx;
+        ctrl->evntsel[idx] = 0x4101b7; /* offcore_rsp0 event code */
+        ctrl->nhlm.offcore_rsp[0] = offcore_rsp0;
+        ++idx;
+    }
+    ctrl->nractrs = idx;
 
-	if (ievent) {
-		ctrl->pmc_map[idx] = idx;
-		ctrl->evntsel[idx] = ievent;
-		ctrl->ireset[idx] = icount;
-		ctrl->nrictrs = 1;
-		++idx;
-	}
+    if (ievent) {
+        ctrl->pmc_map[idx] = idx;
+        ctrl->evntsel[idx] = ievent;
+        ctrl->ireset[idx] = icount;
+        ctrl->nrictrs = 1;
+        ++idx;
+    }
 }
 
 
@@ -230,4 +230,50 @@ utils_md5(const char *path, utils_md5hash_t hash)
 out:
     fclose(fp);
     return ret;
+}
+
+
+static void
+log_pmc_map_append(log_pmc_map_t *map, struct perfctr_cpu_control *ctrl)
+{
+    unsigned int i;
+
+    map->counters = ctrl->nractrs + ctrl->nrictrs;
+    for (i = 0; i < map->counters; i++)
+        map->eventsel_map[i] = ctrl->evntsel[i];
+    map->offcore_rsp0 = ctrl->nhlm.offcore_rsp[0];
+    map->ireset = ctrl->ireset[map->counters];
+}
+
+
+void
+log_header_append(log_header_t *header, struct perfctr_cpu_control *ctrl)
+{
+    if (header->num_processes < LOG_MAX_PROCS) {
+        log_header_process_t *h = &header->processes[header->num_processes++];
+
+        log_pmc_map_append(&h->pmc_map, ctrl);
+    }
+}
+
+static void
+log_pmc_append(log_pmc_t *pmc, struct perfctr_sum_ctrs *ctrs, int counters)
+{
+    int i;
+
+    pmc->tsc = ctrs->tsc;
+    for (i = 0; i < counters; i++)
+        pmc->pmc[i] = ctrs->pmc[i];
+}
+
+void
+log_event_append(log_event_t *event, 
+    struct perfctr_cpu_control *ctrl,
+    struct perfctr_sum_ctrs *ctrs)
+{
+    if (event->num_processes < LOG_MAX_PROCS) {
+        log_pmc_t *pmc = &event->pmc[event->num_processes++];
+
+        log_pmc_append(pmc, ctrs, ctrl->nractrs);
+    }
 }

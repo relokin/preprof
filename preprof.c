@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <dlfcn.h>
 
+#include "log.h"
 #include "pirate.h"
 #include "utils.h"
 #include "expect.h"
@@ -36,7 +37,10 @@ static struct perfctr_cpu_control perf_control;
 static pirate_conf_t pirate_conf;
 static struct perfctr_sum_ctrs pirate_ctrs[PIRATE_MAX_PROC];
 
+static log_t log_;
+
 static bool opt_one_thread = false;
+static int  opt_threads;
 static bool opt_pirate = false;
 static int  opt_pirate_procs = 1;
 static int  opt_pirate_wset;
@@ -74,6 +78,7 @@ setup(void)
     unsigned int ievent = 0;
     unsigned long icount = 0;
     char *prname = NULL;
+    log_header_t header = { .version = LOG_VERSION_CURRENT };
 
     load_functions();
 
@@ -81,10 +86,14 @@ setup(void)
     if ((e = getenv("PREPROF_RUN_ONE_THREAD")))
         opt_one_thread = true;
 
+    if ((e = getenv("PREPROF_THREADS")))
+        opt_threads = atoi(e);
+
     if ((e = getenv("PREPROF_PIRATE_WSET"))) {
         opt_pirate = true;
         opt_pirate_wset = atoi(e);
         opt_one_thread = true;
+        opt_threads = 1;
     }
 
     for (i = 0; i < PERFCTR_CNT; i++) {
@@ -109,6 +118,10 @@ setup(void)
         prname = e;
 
     perfctr_control_init(&perf_control, &event_vect, offcore_rsp0, ievent, icount);
+
+    /* Initialize log header */
+    for (i = 0; i < opt_threads; i++)
+        log_header_append(&header, &perf_control);
 
     /* Initialize pirate */
     if (opt_pirate) {
@@ -135,48 +148,43 @@ setup(void)
         pirate_conf.cpu_control.nractrs = 2;
 #endif
 
+        for (i = 0; i < opt_pirate_procs; i++)
+            log_header_append(&header, &pirate_conf.cpu_control);
+
         EXPECT_EXIT(!pirate_init(&pirate_conf));
         EXPECT_EXIT(!pirate_launch());
     }
+
+    EXPECT_EXIT(log_create(&log_, &header, "foo.log") == LOG_ERROR_OK);
 
     fprintf(stderr, "preprof: successfully initialized %s (PID: %lu).\n",
             prname ? prname : "", (unsigned long) getpid());
 }
 
-/* XXX Log to stdout for now */
-static void
-log_perf_ctrs(struct perfctr_cpu_control *ctrl, struct perfctr_sum_ctrs *ctrs)
-{
-    unsigned int i;
-
-    printf("tsc: %llu\n", ctrs->tsc);
-    for (i = 0; i < ctrl->nractrs; i++)
-        printf("%#x: %llu\n", ctrl->evntsel[i], ctrs->pmc[i]);
-    printf("\n");
-}
-
 static void
 shutdown(void)
 {
-    printf("\nTarget counters:\n");
+    log_event_t event;
+    memset(&event, 0, sizeof(event));
 
     struct thread_info *iter;
     VECT_FOREACH(&thread_info_vect, iter) {
         if (iter->run_thread)
-            log_perf_ctrs(&perf_control, &iter->perf_ctrs);
+            log_event_append(&event, &perf_control, &iter->perf_ctrs);
     }
 
     if (opt_pirate) {
         int i;
-
-        printf("Pirate counters:\n");
-        for (i = 0; i < opt_pirate_procs; i++) 
-            log_perf_ctrs(&pirate_conf.cpu_control, &pirate_ctrs[i]);
+        for (i = 0; i < opt_pirate_procs; i++)
+            log_event_append(&event, &pirate_conf.cpu_control, &pirate_ctrs[i]);
 
         /* Finilizing pirate */
         EXPECT_EXIT(!pirate_kill());
         EXPECT_EXIT(!pirate_fini());
     }
+
+    EXPECT_EXIT(log_write_event(&log_, &event) == LOG_ERROR_OK);
+    EXPECT_EXIT(log_close(&log_) == LOG_ERROR_OK);
 }
 
 static void *
@@ -222,7 +230,7 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
         }
     } else {
         if (opt_one_thread)
-        thread.run_thread = false;
+            thread.run_thread = false;
     }
     first = 0;
 
@@ -243,7 +251,7 @@ pthread_join(pthread_t thread, void **retval)
         if (opt_pirate) {
             EXPECT(!pirate_stop());
             EXPECT(!pirate_ctrs_read(pirate_ctrs));
-            }
+        }
     }
 
     return rc;
