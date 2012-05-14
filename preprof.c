@@ -137,11 +137,11 @@ setup(void)
         pirate_conf.cpu_control.pmc_map[1] = 1;
         pirate_conf.cpu_control.evntsel[1] = 0x41020b; // Stores
 
-#if 0
+#if 1
         /* XXX error: 'struct <anonymous>' has no member named 'offcore_rsp0'*/
         pirate_conf.cpu_control.pmc_map[2] = 2;
         pirate_conf.cpu_control.evntsel[2] = 0x4101b7;
-        pirate_conf.cpu_control.nhlm.offcore_rsp0[0] = 0xf077; // Fetches
+        pirate_conf.cpu_control.nhlm.offcore_rsp[0] = 0xf077; // Fetches
 
         pirate_conf.cpu_control.nractrs = 3;
 #else
@@ -164,6 +164,7 @@ setup(void)
 static void
 shutdown(void)
 {
+    int i;
     log_event_t event;
     memset(&event, 0, sizeof(event));
 
@@ -174,7 +175,6 @@ shutdown(void)
     }
 
     if (opt_pirate) {
-        int i;
         for (i = 0; i < opt_pirate_procs; i++)
             log_event_append(&event, &pirate_conf.cpu_control, &pirate_ctrs[i]);
 
