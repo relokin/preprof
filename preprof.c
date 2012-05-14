@@ -39,11 +39,12 @@ static struct perfctr_sum_ctrs pirate_ctrs[PIRATE_MAX_PROC];
 
 static log_t log_;
 
-static bool opt_one_thread = false;
-static int  opt_threads;
-static bool opt_pirate = false;
-static int  opt_pirate_procs = 1;
-static int  opt_pirate_wset;
+static bool  opt_one_thread = false;
+static int   opt_threads;
+static bool  opt_pirate = false;
+static int   opt_pirate_procs = 1;
+static int   opt_pirate_wset;
+static char *opt_file;
 
 static int (*real_pthread_create)(pthread_t *newthread,
         const pthread_attr_t *attr,
@@ -114,6 +115,9 @@ setup(void)
     if ((e = getenv("PREPROF_ICOUNT")))
         icount = strtoul(e, NULL, 16);
 
+    if ((e = getenv("PREPROF_FILE")))
+        opt_file = e;
+
     if ((e = getenv("_")))
         prname = e;
 
@@ -137,16 +141,11 @@ setup(void)
         pirate_conf.cpu_control.pmc_map[1] = 1;
         pirate_conf.cpu_control.evntsel[1] = 0x41020b; // Stores
 
-#if 1
-        /* XXX error: 'struct <anonymous>' has no member named 'offcore_rsp0'*/
         pirate_conf.cpu_control.pmc_map[2] = 2;
         pirate_conf.cpu_control.evntsel[2] = 0x4101b7;
         pirate_conf.cpu_control.nhlm.offcore_rsp[0] = 0xf077; // Fetches
 
         pirate_conf.cpu_control.nractrs = 3;
-#else
-        pirate_conf.cpu_control.nractrs = 2;
-#endif
 
         for (i = 0; i < opt_pirate_procs; i++)
             log_header_append(&header, &pirate_conf.cpu_control);
@@ -155,7 +154,7 @@ setup(void)
         EXPECT_EXIT(!pirate_launch());
     }
 
-    EXPECT_EXIT(log_create(&log_, &header, "foo.log") == LOG_ERROR_OK);
+    EXPECT_EXIT(log_create(&log_, &header, opt_file) == LOG_ERROR_OK);
 
     fprintf(stderr, "preprof: successfully initialized %s (PID: %lu).\n",
             prname ? prname : "", (unsigned long) getpid());
