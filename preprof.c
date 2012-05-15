@@ -28,19 +28,18 @@ struct thread_info {
 };
 
 /* Global variables */
-static VECT(struct thread_info) thread_info_vect = VECT_NULL;
+#define MAX_PROFILED_THREADS 128
+static struct thread_info thread_info_vect[MAX_PROFILED_THREADS];
 
-static volatile int nthreads = 0;
+static volatile int created_threads;
+static volatile int running_threads;
 
-static struct perfctr_cpu_control perf_control;
+static struct perfctr_cpu_control thread_perf_control;
+static struct perfctr_cpu_control pirate_perf_control;
 
-static pirate_conf_t pirate_conf;
 static struct perfctr_sum_ctrs pirate_ctrs[PIRATE_MAX_PROC];
 
-static log_t log_;
-
 static bool  opt_one_thread = false;
-static int   opt_threads;
 static bool  opt_pirate = false;
 static int   opt_pirate_procs = 1;
 static int   opt_pirate_wset;
@@ -79,7 +78,6 @@ setup(void)
     unsigned int ievent = 0;
     unsigned long icount = 0;
     char *prname = NULL;
-    log_header_t header = { .version = LOG_VERSION_CURRENT };
 
     load_functions();
 
@@ -87,14 +85,10 @@ setup(void)
     if ((e = getenv("PREPROF_RUN_ONE_THREAD")))
         opt_one_thread = true;
 
-    if ((e = getenv("PREPROF_THREADS")))
-        opt_threads = atoi(e);
-
     if ((e = getenv("PREPROF_PIRATE_WSET"))) {
         opt_pirate = true;
         opt_pirate_wset = atoi(e);
         opt_one_thread = true;
-        opt_threads = 1;
     }
 
     for (i = 0; i < PERFCTR_CNT; i++) {
@@ -121,40 +115,34 @@ setup(void)
     if ((e = getenv("_")))
         prname = e;
 
-    perfctr_control_init(&perf_control, &event_vect, offcore_rsp0, ievent, icount);
+    perfctr_control_init(&thread_perf_control, &event_vect, offcore_rsp0, ievent, icount);
 
-    /* Initialize log header */
-    for (i = 0; i < opt_threads; i++)
-        log_header_append(&header, &perf_control);
-
-    /* Initialize pirate */
     if (opt_pirate) {
+        pirate_conf_t pirate_conf;
+
+        /* Hardcoded pirate performance counter */
+        pirate_perf_control.tsc_on = 1;
+
+        pirate_perf_control.pmc_map[0] = 0;
+        pirate_perf_control.evntsel[0] = 0x41010b; // Loads
+
+        pirate_perf_control.pmc_map[1] = 1;
+        pirate_perf_control.evntsel[1] = 0x41020b; // Stores
+
+        pirate_perf_control.pmc_map[2] = 2;
+        pirate_perf_control.evntsel[2] = 0x4101b7;
+        pirate_perf_control.nhlm.offcore_rsp[0] = 0xf077; // Fetches
+
+        pirate_perf_control.nractrs = 3;
+
+        /* Initialize pirate */
         pirate_conf.processes = opt_pirate_procs;
         pirate_conf.footprint = opt_pirate_wset;
-
-        /* Hardcoded performance counter */
-        pirate_conf.cpu_control.tsc_on = 1;
-
-        pirate_conf.cpu_control.pmc_map[0] = 0;
-        pirate_conf.cpu_control.evntsel[0] = 0x41010b; // Loads
-
-        pirate_conf.cpu_control.pmc_map[1] = 1;
-        pirate_conf.cpu_control.evntsel[1] = 0x41020b; // Stores
-
-        pirate_conf.cpu_control.pmc_map[2] = 2;
-        pirate_conf.cpu_control.evntsel[2] = 0x4101b7;
-        pirate_conf.cpu_control.nhlm.offcore_rsp[0] = 0xf077; // Fetches
-
-        pirate_conf.cpu_control.nractrs = 3;
-
-        for (i = 0; i < opt_pirate_procs; i++)
-            log_header_append(&header, &pirate_conf.cpu_control);
+        pirate_conf.cpu_control = pirate_perf_control;
 
         EXPECT_EXIT(!pirate_init(&pirate_conf));
         EXPECT_EXIT(!pirate_launch());
     }
-
-    EXPECT_EXIT(log_create(&log_, &header, opt_file) == LOG_ERROR_OK);
 
     fprintf(stderr, "preprof: successfully initialized %s (PID: %lu).\n",
             prname ? prname : "", (unsigned long) getpid());
@@ -164,26 +152,39 @@ static void
 shutdown(void)
 {
     int i;
+    log_t log;
+    log_header_t header;
     log_event_t event;
-    memset(&event, 0, sizeof(event));
 
-    struct thread_info *iter;
-    VECT_FOREACH(&thread_info_vect, iter) {
-        if (iter->run_thread)
-            log_event_append(&event, &perf_control, &iter->perf_ctrs);
-    }
-
+    /* Finilizing pirate */
     if (opt_pirate) {
-        for (i = 0; i < opt_pirate_procs; i++)
-            log_event_append(&event, &pirate_conf.cpu_control, &pirate_ctrs[i]);
-
-        /* Finilizing pirate */
         EXPECT_EXIT(!pirate_kill());
         EXPECT_EXIT(!pirate_fini());
     }
 
-    EXPECT_EXIT(log_write_event(&log_, &event) == LOG_ERROR_OK);
-    EXPECT_EXIT(log_close(&log_) == LOG_ERROR_OK);
+    /* Initialize log header */
+    header.version = LOG_VERSION_CURRENT;
+    for (i = 0; i < created_threads; i++)
+        log_header_append(&header, &thread_perf_control);
+    for (i = 0; i < opt_pirate_procs; i++)
+        log_header_append(&header, &pirate_perf_control);
+
+    /* Initialize log event */
+    memset(&event, 0, sizeof(event));
+    for (i = 0; i < created_threads; i++) {
+        struct thread_info *thread = &thread_info_vect[i];
+        log_event_append(&event, &thread_perf_control, &thread->perf_ctrs);
+    }
+
+    if (opt_pirate) {
+        for (i = 0; i < opt_pirate_procs; i++)
+            log_event_append(&event, &pirate_perf_control, &pirate_ctrs[i]);
+    }
+
+    /* Write event to log file */
+    EXPECT_EXIT(log_create(&log, &header, opt_file) == LOG_ERROR_OK);
+    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);
+    EXPECT_EXIT(log_close(&log) == LOG_ERROR_OK);
 }
 
 static void *
@@ -198,7 +199,7 @@ wrapped_start_routine(void *arg)
 
         /* Start performance counters */
         EXPECT_RET((perf_fd = perfctr_open()) != -1, NULL);
-        EXPECT_RET(!perfctr_init(perf_fd, &perf_control), NULL);
+        EXPECT_RET(!perfctr_init(perf_fd, &thread_perf_control), NULL);
 
         real_ret = (*thread->routine)(thread->arg);
 
@@ -214,29 +215,29 @@ int
 pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
         void *(*start_routine) (void *), void *arg)
 {
-    struct thread_info thread;
+    struct thread_info *thread;
     static int first = 1;
 
-    memset(&thread, 0, sizeof thread);
-    thread.routine = start_routine;
-    thread.arg = arg;
-    thread.run_thread = true;
+    /* XXX test that created_threads is less than MAX_PROFILED_THREADS */
+    thread = &thread_info_vect[created_threads++];
+    thread->routine = start_routine;
+    thread->arg = arg;
+    thread->run_thread = true;
 
-    if (first) {
+    if (!first) {
         if (opt_pirate) {
             EXPECT(!pirate_warm());
             EXPECT(!pirate_cont());
         }
     } else {
         if (opt_one_thread)
-            thread.run_thread = false;
+            thread->run_thread = false;
     }
     first = 0;
 
-    __sync_fetch_and_add(&nthreads, 1);
-    VECT_APPEND(&thread_info_vect, thread);
+    __sync_fetch_and_add(&running_threads, 1);
 
-    return real_pthread_create(newthread, attr, wrapped_start_routine, &VECT_LAST(&thread_info_vect));
+    return real_pthread_create(newthread, attr, wrapped_start_routine, thread); 
 }
 
 int
@@ -246,7 +247,7 @@ pthread_join(pthread_t thread, void **retval)
 
     rc = real_pthread_join(thread, retval);
 
-    if (!__sync_sub_and_fetch(&nthreads, 1)) {
+    if (!__sync_sub_and_fetch(&running_threads, 1)) {
         if (opt_pirate) {
             EXPECT(!pirate_stop());
             EXPECT(!pirate_ctrs_read(pirate_ctrs));
