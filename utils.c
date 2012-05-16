@@ -62,6 +62,18 @@ utils_setaffinity(int core)
     return 0;
 }
 
+
+int
+utils_setaffinity_pthread(pthread_t thread, int core)
+{
+    cpu_set_t set;
+
+    CPU_ZERO(&set);
+    CPU_SET(core, &set);
+    EXPECT(!pthread_setaffinity_np(thread, sizeof(set), &set));
+    return 0;
+}
+
 int
 utils_setnumanode(int node)
 {

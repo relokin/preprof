@@ -23,6 +23,7 @@
 struct thread_info {
     void *(*routine) (void *);
     void *arg;
+    int core;
     bool run_thread;
     struct perfctr_sum_ctrs perf_ctrs;
 };
@@ -41,9 +42,11 @@ static struct perfctr_sum_ctrs pirate_ctrs[PIRATE_MAX_PROC];
 
 static bool  opt_one_thread = false;
 static bool  opt_pirate = false;
-static int   opt_pirate_procs = 1;
 static int   opt_pirate_wset;
 static char *opt_file;
+
+#define AFFINITY_MAP_SIZE 4
+static int affinity_map[AFFINITY_MAP_SIZE] = {1, 3, 5, 7};
 
 static int (*real_pthread_create)(pthread_t *newthread,
         const pthread_attr_t *attr,
@@ -136,13 +139,16 @@ setup(void)
         pirate_perf_control.nractrs = 3;
 
         /* Initialize pirate */
-        pirate_conf.processes = opt_pirate_procs;
+        pirate_conf.processes = 1;
+        pirate_conf.cores[0] = 7;
         pirate_conf.footprint = opt_pirate_wset;
         pirate_conf.cpu_control = pirate_perf_control;
 
         EXPECT_EXIT(!pirate_init(&pirate_conf));
         EXPECT_EXIT(!pirate_launch());
     }
+
+    EXPECT_EXIT(!utils_setaffinity(affinity_map[0]));
 
     fprintf(stderr, "preprof: successfully initialized %s (PID: %lu).\n",
             prname ? prname : "", (unsigned long) getpid());
@@ -166,7 +172,7 @@ shutdown(void)
     header.version = LOG_VERSION_CURRENT;
     for (i = 0; i < created_threads; i++)
         log_header_append(&header, &thread_perf_control);
-    for (i = 0; i < opt_pirate_procs; i++)
+    for (i = 0; i < 1; i++)
         log_header_append(&header, &pirate_perf_control);
 
     /* Initialize log event */
@@ -177,7 +183,7 @@ shutdown(void)
     }
 
     if (opt_pirate) {
-        for (i = 0; i < opt_pirate_procs; i++)
+        for (i = 0; i < 1; i++)
             log_event_append(&event, &pirate_perf_control, &pirate_ctrs[i]);
     }
 
@@ -196,6 +202,8 @@ wrapped_start_routine(void *arg)
     if (thread->run_thread) {
         int perf_fd;
         struct perfctr_sum_ctrs ctrs;
+    
+        EXPECT_RET(!utils_setaffinity_pthread(pthread_self(), thread->core), NULL);
 
         /* Start performance counters */
         EXPECT_RET((perf_fd = perfctr_open()) != -1, NULL);
@@ -219,19 +227,22 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
     static int first = 1;
 
     /* XXX test that created_threads is less than MAX_PROFILED_THREADS */
-    thread = &thread_info_vect[created_threads++];
+    thread = &thread_info_vect[created_threads];
     thread->routine = start_routine;
     thread->arg = arg;
+    thread->core = affinity_map[created_threads & (AFFINITY_MAP_SIZE - 1)];
     thread->run_thread = true;
+    ++created_threads;
 
-    if (!first) {
+    if (first) {
         if (opt_pirate) {
             EXPECT(!pirate_warm());
             EXPECT(!pirate_cont());
         }
     } else {
-        if (opt_one_thread)
+        if (opt_one_thread) {
             thread->run_thread = false;
+        }
     }
     first = 0;
 

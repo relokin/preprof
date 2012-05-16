@@ -1,7 +1,10 @@
 #ifndef _UTILS_H_
 #define _UTILS_H_
+
+#define _GNU_SOURCE
 #include <libperfctr.h>
 #include <mhash.h>
+#include <pthread.h>
 
 #include "vect.h"
 #include "log.h"
@@ -12,6 +15,7 @@ void *utils_calloc(size_t nmemb, size_t size);
 void  utils_free(void *addr, size_t nmemb, size_t size);
 
 int utils_setaffinity(int core);
+int utils_setaffinity_pthread(pthread_t thread, int core);
 int utils_setnumanode(int node);
 
 int utils_send_fd(int sockfd, int fd);
