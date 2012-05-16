@@ -44,24 +44,14 @@ pirate_init(pirate_conf_t *conf_)
     conf = *conf_;
     
     ER(conf.processes < MAX_PID);
-#if 0
-    ER((mem = utils_calloc(1, conf.footprint)) != NULL ? 0 : -1);
-#else
-    /* For testing on weize */
-    mem = malloc(conf.footprint);
-#endif
+    ER((mem = utils_calloc(1, conf.footprint)) != NULL);
     return 0;
 }
 
 int
 pirate_fini(void)
 {
-#if 0
     utils_free((void *)mem, 1, conf.footprint);
-#else
-    /* For testing on weize */
-    free((void *)mem);
-#endif
     return 0;
 }
 
@@ -112,7 +102,7 @@ _pirate_launch(int tid)
     if (!pid) {
         //ER(setpgid(0, getppid()));
         EE(!utils_setaffinity(conf.cores[tid]));
-        //EE(!utils_setnumanode(conf.node));
+        EE(!utils_setnumanode(conf.node));
 
         EE(fd = perfctr_open());
         EE(!utils_send_fd(sockets[1], fd));

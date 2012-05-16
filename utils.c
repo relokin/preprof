@@ -39,7 +39,7 @@ void *
 utils_calloc(size_t nmemb, size_t size)
 {
     void *ptr;
-    EXPECT_RET(alloc_huge(&ptr, nmemb * size) < 0, NULL);
+    EXPECT_RET(!alloc_huge(&ptr, nmemb * size), NULL);
     memset(ptr, 0, size);
     return ptr;
 }
