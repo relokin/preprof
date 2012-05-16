@@ -16,20 +16,23 @@ CFLAGS=$(WARN) -pthread -g -std=gnu99 $(INCLUDES) -O0 -ffast-math \
      -Wp,-D_FORTIFY_SOURCE=2 -fno-common -fdiagnostics-show-option \
      -fno-omit-frame-pointer -MD -MP -fPIC
 
-LDFLAGS += -shared -ldl -lm -lpthread -lbz2 -lmhash -lperfctr
+LDFLAGS += -shared -ldl -lm -lpthread -lbz2 -lperfctr
 
-SRC = preprof.c pirate.c utils.c log.c
-OBJ = preprof.o pirate.o utils.o log.o
+POBJ = preprof.o pirate.o utils.o log.o
+TOBJ = pthread_trace.o
 
-LIBS = libpreprof.so
+LIBS = libpreprof.so libpthread_trace.so
 
 all: ${LIBS}
 
 %.o: %.c
 	@${CC} -o $@ -c ${CFLAGS} ${EXTRA_FLAGS} $<
 
-lib%.so: ${OBJ}
+libpreprof.so: $(POBJ)
 	@${CC} -o $@ -Wl,-soname,$@ $^ ${LDFLAGS}
+
+libpthread_trace.so: $(TOBJ)
+	$(CC) -o $@ -Wl,-soname,$@ $^ ${LDFLAGS}
 
 clean:
 	@rm -f *.o *.d
