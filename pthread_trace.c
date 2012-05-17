@@ -29,6 +29,11 @@ static int (*real_pthread_barrier_init)(
 static int (*real_pthread_barrier_destroy)(pthread_barrier_t *);
 static int (*real_pthread_barrier_wait)(pthread_barrier_t *);
 
+static int (*real_pthread_cond_destroy)(pthread_cond_t *);
+static int (*real_pthread_cond_init)(pthread_cond_t *restrict, const pthread_condattr_t *restrict);
+static int (*real_pthread_cond_broadcast)(pthread_cond_t *);
+static int (*real_pthread_cond_signal)(pthread_cond_t *);
+
 /* Function declarations */
 static void init(void) __attribute ((constructor));
 static void fini(void) __attribute ((destructor));
@@ -62,6 +67,11 @@ init(void)
     LOAD_FUNC(pthread_barrier_init);
     LOAD_FUNC(pthread_barrier_destroy);
     LOAD_FUNC(pthread_barrier_wait);
+
+    LOAD_FUNC(pthread_cond_init);
+    LOAD_FUNC(pthread_cond_destroy);
+    LOAD_FUNC(pthread_cond_broadcast);
+    LOAD_FUNC(pthread_cond_signal);
 }
 
 static void
@@ -87,21 +97,21 @@ pthread_join(pthread_t thread, void **retval)
 int
 pthread_mutex_lock(pthread_mutex_t *mutex)
 {
-    //LOG("mutex = %#lx", (long)mutex);
+    LOG("mutex = %#lx", (long)mutex);
     return real_pthread_mutex_lock(mutex);
 }
 
 int
 pthread_mutex_trylock(pthread_mutex_t *mutex)
 {
-    //LOG("mutex = %#lx", (long)mutex);
+    LOG("mutex = %#lx", (long)mutex);
     return real_pthread_mutex_trylock(mutex);
 }
 
 int
 pthread_mutex_unlock(pthread_mutex_t *mutex)
 {
-    //LOG("mutex = %#lx", (long)mutex);
+    LOG("mutex = %#lx", (long)mutex);
     return real_pthread_mutex_unlock(mutex);
 }
 
@@ -127,4 +137,35 @@ pthread_barrier_wait(pthread_barrier_t *barrier)
     LOG("barrier = %#lx", (long)barrier);
     return real_pthread_barrier_wait(barrier);
 }
+
+
+int
+pthread_cond_destroy(pthread_cond_t *cond)
+{
+    LOG("cond = %#lx", (long)cond);
+    return real_pthread_cond_destroy(cond);
+}
+
+int
+pthread_cond_init(pthread_cond_t *restrict cond,
+                  const pthread_condattr_t *restrict attr)
+{
+    LOG("cond = %#lx", (long)cond);
+    return real_pthread_cond_init(cond, attr);
+}
+
+int
+pthread_cond_broadcast(pthread_cond_t *cond)
+{
+    LOG("cond = %#lx", (long)cond);
+    return real_pthread_cond_broadcast(cond);
+}
+
+int
+pthread_cond_signal(pthread_cond_t *cond)
+{
+    LOG("cond = %#lx", (long)cond);
+    return real_pthread_cond_signal(cond);
+}
+
 
