@@ -16,7 +16,7 @@ CFLAGS=$(WARN) -pthread -g -std=gnu99 $(INCLUDES) -O0 -ffast-math \
      -Wp,-D_FORTIFY_SOURCE=2 -fno-common -fdiagnostics-show-option \
      -fno-omit-frame-pointer -MD -MP -fPIC
 
-LDFLAGS += -shared -ldl -lm -lpthread -lbz2 -lperfctr
+LDFLAGS += -shared -ldl -lm -lpthread -lbz2 -lperfctr -lnuma
 
 POBJ = preprof.o pirate.o utils.o log.o
 TOBJ = pthread_trace.o

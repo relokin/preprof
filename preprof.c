@@ -45,8 +45,10 @@ static bool  opt_pirate = false;
 static int   opt_pirate_wset;
 static char *opt_file;
 
-#define AFFINITY_MAP_SIZE 4
-static int affinity_map[AFFINITY_MAP_SIZE] = {1, 3, 5, 7};
+#define CORE_AFFINITY_MAP_SIZE 4
+static int core_affinity_map[CORE_AFFINITY_MAP_SIZE] = {1, 3, 5, 7};
+#define NODE_AFFINITY_MAP_SIZE 1
+static int node_affinity_map[NODE_AFFINITY_MAP_SIZE] = {1};
 
 static int (*real_pthread_create)(pthread_t *newthread,
         const pthread_attr_t *attr,
@@ -140,7 +142,8 @@ setup(void)
 
         /* Initialize pirate */
         pirate_conf.processes = 1;
-        pirate_conf.cores[0] = 7;
+        pirate_conf.cores[0] = core_affinity_map[CORE_AFFINITY_MAP_SIZE - 1];
+        pirate_conf.node = node_affinity_map[NODE_AFFINITY_MAP_SIZE - 1];
         pirate_conf.footprint = opt_pirate_wset;
         pirate_conf.cpu_control = pirate_perf_control;
 
@@ -148,7 +151,8 @@ setup(void)
         EXPECT_EXIT(!pirate_launch());
     }
 
-    EXPECT_EXIT(!utils_setaffinity(affinity_map[0]));
+    EXPECT_EXIT(!utils_setaffinity(core_affinity_map[0]));
+    EXPECT_EXIT(!utils_setnumanode(node_affinity_map[0]));
 
     fprintf(stderr, "preprof: successfully initialized %s (PID: %lu).\n",
             prname ? prname : "", (unsigned long) getpid());
@@ -199,10 +203,14 @@ wrapped_start_routine(void *arg)
     void *real_ret = NULL;
     struct thread_info *thread = arg;
 
+    printf("wrapped_start_routine - all\n");
+
     if (thread->run_thread) {
         int perf_fd;
         struct perfctr_sum_ctrs ctrs;
     
+        printf("wrapped_start_routine - run\n");
+
         EXPECT_RET(!utils_setaffinity_pthread(pthread_self(), thread->core), NULL);
 
         /* Start performance counters */
@@ -226,11 +234,13 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
     struct thread_info *thread;
     static int first = 1;
 
+    printf("pthread_create\n");
+
     /* XXX test that created_threads is less than MAX_PROFILED_THREADS */
     thread = &thread_info_vect[created_threads];
     thread->routine = start_routine;
     thread->arg = arg;
-    thread->core = affinity_map[created_threads & (AFFINITY_MAP_SIZE - 1)];
+    thread->core = core_affinity_map[created_threads & (CORE_AFFINITY_MAP_SIZE - 1)];
     thread->run_thread = true;
     ++created_threads;
 
@@ -257,6 +267,8 @@ pthread_join(pthread_t thread, void **retval)
     int rc;
 
     rc = real_pthread_join(thread, retval);
+
+    printf("pthread_join\n");
 
     if (!__sync_sub_and_fetch(&running_threads, 1)) {
         if (opt_pirate) {
