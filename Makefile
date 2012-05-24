@@ -12,16 +12,18 @@ WARN=-Wall -W -Wextra -Wno-long-long -Winline -Wvla -Wno-overlength-strings \
      -Wendif-labels -Wcast-align -Wwrite-strings -Wno-unused-parameter      \
      -Wno-strict-aliasing
 # -Wdeclaration-after-statement
+INCLUDES=$(shell pkg-config --cflags glib-2.0)
 CFLAGS=$(WARN) -pthread -g -std=gnu99 $(INCLUDES) -O0 -ffast-math \
      -Wp,-D_FORTIFY_SOURCE=2 -fno-common -fdiagnostics-show-option \
      -fno-omit-frame-pointer -MD -MP -fPIC
 
-LDFLAGS += -shared -ldl -lm -lpthread -lbz2 -lperfctr -lnuma
+LDFLAGS += -shared -ldl -lm -lpthread -lbz2 -lperfctr -lnuma \
+       $(shell pkg-config --libs glib-2.0)
 
 POBJ = preprof.o pirate.o utils.o log.o
 TOBJ = pthread_trace.o
 
-LIBS = libpreprof.so libpthread_trace.so
+LIBS = libpreprof.so libpthread_trace.so liblockprof.so
 
 all: ${LIBS}
 
@@ -34,11 +36,14 @@ libpreprof.so: $(POBJ)
 libpthread_trace.so: $(TOBJ)
 	$(CC) -o $@ -Wl,-soname,$@ $^ ${LDFLAGS}
 
+liblockprof.so: lockprof.o log.o
+	$(CC) -o $@ -Wl,-soname,$@ $^ $(LDFLAGS)
+
 clean:
 	@rm -f *.o *.d
 
 distclean: clean
-	@rm -f ${LIBS}
+	@rm -f $(LIBS)
 
 install: ${LIBS}
 	@echo
