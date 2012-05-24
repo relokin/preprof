@@ -117,12 +117,11 @@ fini(void)
        execute the same code */
     int len = thread_info_vect[0].timestamp->len;
     for (int j = 0; j < len; j++) {
+	log_event_t event;
+	memset(&event, 0, sizeof(event));
 	for (int i = 0; i < nthreads; i++) {
 	    GArray *timestamp = thread_info_vect[i].timestamp;
-	    log_event_t event;
 
-	    /* Initialize log event */
-	    memset(&event, 0, sizeof(event));
 	    event.pmc[event.num_processes++].tsc =
 		g_array_index(timestamp, uint64_t, j);
 	    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);
@@ -175,7 +174,7 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
     _thread_info->arg = arg;
     _thread_info->used = true;
 
-    return real_pthread_create(newthread, attr, _start_routine, arg);
+    return real_pthread_create(newthread, attr, _start_routine, _thread_info);
 }
 
 int
