@@ -25,13 +25,13 @@ static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *,
 				  void *(*) (void *), void *);
 
 static int (*real_pthread_mutex_lock)(pthread_mutex_t *);
+static int (*real_pthread_mutex_unlock)(pthread_mutex_t *);
 static int (*real_pthread_barrier_wait)(pthread_barrier_t *);
 static int (*real_pthread_rwlock_rdlock)(pthread_rwlock_t *);
 static int (*real_pthread_rwlock_wrlock)(pthread_rwlock_t *);
 
 /* No need to do anything with them now */
 // static int (*real_pthread_mutex_trylock)(pthread_mutex_t *);
-// static int (*real_pthread_mutex_unlock)(pthread_mutex_t *);
 
 //static int (*real_pthread_barrier_init)(pthread_barrier_t *restrict,
 //					const pthread_barrierattr_t *restrict,
@@ -59,6 +59,7 @@ struct thread_info_s {
 #else
     GArray *timestamp;
 #endif /* AGGREGATE */
+    uint64_t tsc_start;
     uint64_t tsc_end;
 };
 
@@ -67,31 +68,28 @@ struct thread_info_s {
 static struct thread_info_s thread_info_vect[MAX_PROFILED_THREADS];
 static __thread struct thread_info_s *thread_info;
 
-#define CORE_AFFINITY_MAP_SIZE 4
-static int core_affinity_map[CORE_AFFINITY_MAP_SIZE] = {1, 3, 5, 7};
-
 #define LOAD_FUNC(name) do {                            \
     *(void**) (&real_##name) = dlsym(RTLD_NEXT, #name); \
     assert(real_##name);                                \
 } while (0)
 
-static int
-utils_setaffinity_pthread(pthread_t thread, int core)
-{
-    cpu_set_t set;
-
-    CPU_ZERO(&set);
-    CPU_SET(core, &set);
-    EXPECT(!pthread_setaffinity_np(thread, sizeof(set), &set));
-    return 0;
-}
 
 static void
 init(void)
 {
+    cpu_set_t set;
+
+    CPU_ZERO(&set);
+    CPU_SET(1, &set);
+    CPU_SET(3, &set);
+    CPU_SET(5, &set);
+    CPU_SET(7, &set);
+    EXPECT(!pthread_setaffinity_np(pthread_self(), sizeof(set), &set));
+
     LOAD_FUNC(pthread_create);
 
     LOAD_FUNC(pthread_mutex_lock);
+    LOAD_FUNC(pthread_mutex_unlock);
     LOAD_FUNC(pthread_barrier_wait);
     LOAD_FUNC(pthread_rwlock_rdlock);
     LOAD_FUNC(pthread_rwlock_wrlock);
@@ -172,12 +170,23 @@ fini(void)
     }
 #endif /* AGGREGATE */
 
+    uint64_t min_tsc_start = UINT64_C(-1);
     uint64_t max_tsc_end = UINT64_C(0);
-    for (int i = 0; i < nthreads; i++)
+    for (int i = 0; i < nthreads; i++) {
 	if (max_tsc_end < thread_info_vect[i].tsc_end)
 	    max_tsc_end = thread_info_vect[i].tsc_end;
+        if (min_tsc_start > thread_info_vect[i].tsc_start)
+	    min_tsc_start = thread_info_vect[i].tsc_start;
+    }
 
     log_event_t event;
+    memset(&event, 0, sizeof(event));
+    for (int i = 0; i < nthreads; i++) {
+        event.pmc[event.num_processes++].tsc =
+            thread_info_vect[i].tsc_start - min_tsc_start;
+    }
+    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);
+
     memset(&event, 0, sizeof(event));
     for (int i = 0; i < nthreads; i++) {
         event.pmc[event.num_processes++].tsc =
@@ -201,8 +210,7 @@ _start_routine(void *arg)
 
     thread_info = arg;
 
-    EXPECT_RET(!utils_setaffinity_pthread(pthread_self(), thread_info->core), NULL);
-
+    thread_info->tsc_start = read_tsc_p();
     res = (*thread_info->start_routine)(thread_info->arg);
     thread_info->tsc_end = read_tsc_p();
 
@@ -214,13 +222,11 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
 	       void *(*start_routine) (void *), void *arg)
 {
     static int tid = 0;
-    struct thread_info_s *_thread_info = &thread_info_vect[tid];
+    struct thread_info_s *_thread_info = &thread_info_vect[tid++];
 
     _thread_info->start_routine = start_routine;
     _thread_info->arg = arg;
     _thread_info->used = true;
-    _thread_info->core = core_affinity_map[tid & (CORE_AFFINITY_MAP_SIZE - 1)];
-    ++tid;
 
     return real_pthread_create(newthread, attr, _start_routine, _thread_info);
 }
@@ -241,6 +247,12 @@ pthread_mutex_lock(pthread_mutex_t *mutex)
 #endif /* AGGREGATE */
 
     return res;
+}
+
+int
+pthread_mutex_unlock(pthread_mutex_t *mutex)
+{
+    return real_pthread_mutex_unlock(mutex);
 }
 
 int
