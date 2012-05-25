@@ -19,6 +19,8 @@
 #error "This stuff only works on Linux!"
 #endif
 
+#define AGGREGATE
+
 static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *,
 				  void *(*) (void *), void *);
 
@@ -49,7 +51,13 @@ struct thread_info_s {
     void *(*start_routine) (void *);
     void *arg;
     bool used;
+#ifdef AGGREGATE
+    uint64_t mutex_spin;
+    uint64_t barrier_spin;
+    uint64_t rwlock_spin;
+#else
     GArray *timestamp;
+#endif /* AGGREGATE */
     uint64_t tsc_end;
 };
 
@@ -76,9 +84,11 @@ init(void)
 
     LOAD_FUNC(pthread_cond_init);
 
+#ifndef AGGREGATE
     for (int i = 0; i < MAX_PROFILED_THREADS; i++)
 	thread_info_vect[i].timestamp = g_array_new(FALSE, FALSE,
 						    sizeof(uint64_t));
+#endif /* AGGREGATE */
 }
 
 static void
@@ -115,6 +125,25 @@ fini(void)
 
     /* FIXME: quite dirty - but we profile only applications with threads that
        execute the same code */
+
+#ifdef AGGREGATE
+#define DUMP_EVENT(lock_type)						\
+    do {								\
+	log_event_t event;						\
+	memset(&event, 0, sizeof(event));				\
+	for (int i = 0; i < nthreads; i++) {				\
+	    struct thread_info_s *_thread = &thread_info_vect[i];	\
+									\
+	    event.pmc[event.num_processes++].tsc =			\
+		_thread->lock_type ## _spin;				\
+	    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK); \
+	}								\
+    } while (0)
+    DUMP_EVENT(mutex);
+    DUMP_EVENT(barrier);
+    DUMP_EVENT(rwlock);
+#undef DUMP_SPIN
+#else
     int len = thread_info_vect[0].timestamp->len;
     for (int j = 0; j < len; j++) {
 	log_event_t event;
@@ -127,6 +156,7 @@ fini(void)
 	    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);
 	}
     }
+#endif /* AGGREGATE */
 
     uint64_t max_tsc_end = UINT64_C(0);
     for (int i = 0; i < nthreads; i++)
@@ -145,8 +175,10 @@ fini(void)
 
     EXPECT_EXIT(log_close(&log) == LOG_ERROR_OK);
 
+#ifndef AGGREGATE
     for (int i = 0; i < MAX_PROFILED_THREADS; i++)
 	g_array_free(thread_info_vect[i].timestamp, FALSE);
+#endif /* AGGREGATE */
 
 }
 
@@ -186,7 +218,11 @@ pthread_mutex_lock(pthread_mutex_t *mutex)
     tsc1 = read_tsc_p();
     res = real_pthread_mutex_lock(mutex);
     tsc_diff = read_tsc_p() - tsc1;
+#ifdef AGGREGATE
+    thread_info->mutex_spin += tsc_diff;
+#else
     g_array_append_val(thread_info->timestamp, tsc_diff);
+#endif /* AGGREGATE */
 
     return res;
 }
@@ -200,7 +236,11 @@ pthread_barrier_wait(pthread_barrier_t *barrier)
     tsc1 = read_tsc_p();
     res = real_pthread_barrier_wait(barrier);
     tsc_diff = read_tsc_p() - tsc1;
+#ifdef AGGREGATE
+    thread_info->barrier_spin += tsc_diff;
+#else
     g_array_append_val(thread_info->timestamp, tsc_diff);
+#endif /* AGGREGATE */
 
     return res;
 }
@@ -214,7 +254,11 @@ pthread_rwlock_rdlock(pthread_rwlock_t *rwlock)
     tsc1 = read_tsc_p();
     res = real_pthread_rwlock_rdlock(rwlock);
     tsc_diff = read_tsc_p() - tsc1;
+#ifdef AGGREGATE
+    thread_info->rwlock_spin += tsc_diff;
+#else
     g_array_append_val(thread_info->timestamp, tsc_diff);
+#endif /* AGGREGATE */
 
     return res;
 }
@@ -228,7 +272,12 @@ pthread_rwlock_wrlock(pthread_rwlock_t *rwlock)
     tsc1 = read_tsc_p();
     res = real_pthread_rwlock_wrlock(rwlock);
     tsc_diff = read_tsc_p() - tsc1;
+#ifdef AGGREGATE
+    thread_info->rwlock_spin += tsc_diff;
+#else
     g_array_append_val(thread_info->timestamp, tsc_diff);
+#endif /* AGGREGATE */
+
 
     return res;
 }
