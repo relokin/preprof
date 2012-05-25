@@ -84,7 +84,7 @@ init(void)
     CPU_SET(3, &set);
     CPU_SET(5, &set);
     CPU_SET(7, &set);
-    EXPECT(!pthread_setaffinity_np(pthread_self(), sizeof(set), &set));
+    EXPECT_EXIT(!pthread_setaffinity_np(pthread_self(), sizeof(set), &set));
 
     LOAD_FUNC(pthread_create);
 
