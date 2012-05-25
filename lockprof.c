@@ -136,8 +136,8 @@ fini(void)
 									\
 	    event.pmc[event.num_processes++].tsc =			\
 		_thread->lock_type ## _spin;				\
-	    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK); \
 	}								\
+	EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);     \
     } while (0)
     DUMP_EVENT(mutex);
     DUMP_EVENT(barrier);
@@ -163,15 +163,13 @@ fini(void)
 	if (max_tsc_end < thread_info_vect[i].tsc_end)
 	    max_tsc_end = thread_info_vect[i].tsc_end;
 
+    log_event_t event;
+    memset(&event, 0, sizeof(event));
     for (int i = 0; i < nthreads; i++) {
-	    log_event_t event;
-
-	    /* Initialize log event */
-	    memset(&event, 0, sizeof(event));
-	    event.pmc[event.num_processes++].tsc =
-		max_tsc_end - thread_info_vect[i].tsc_end;
-	    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);
+        event.pmc[event.num_processes++].tsc =
+            max_tsc_end - thread_info_vect[i].tsc_end;
     }
+    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);
 
     EXPECT_EXIT(log_close(&log) == LOG_ERROR_OK);
 
