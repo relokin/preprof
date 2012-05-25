@@ -51,6 +51,7 @@ struct thread_info_s {
     void *(*start_routine) (void *);
     void *arg;
     bool used;
+    int core;
 #ifdef AGGREGATE
     uint64_t mutex_spin;
     uint64_t barrier_spin;
@@ -66,11 +67,24 @@ struct thread_info_s {
 static struct thread_info_s thread_info_vect[MAX_PROFILED_THREADS];
 static __thread struct thread_info_s *thread_info;
 
+#define CORE_AFFINITY_MAP_SIZE 4
+static int core_affinity_map[CORE_AFFINITY_MAP_SIZE] = {1, 3, 5, 7};
+
 #define LOAD_FUNC(name) do {                            \
     *(void**) (&real_##name) = dlsym(RTLD_NEXT, #name); \
     assert(real_##name);                                \
 } while (0)
 
+static int
+utils_setaffinity_pthread(pthread_t thread, int core)
+{
+    cpu_set_t set;
+
+    CPU_ZERO(&set);
+    CPU_SET(core, &set);
+    EXPECT(!pthread_setaffinity_np(thread, sizeof(set), &set));
+    return 0;
+}
 
 static void
 init(void)
@@ -187,6 +201,8 @@ _start_routine(void *arg)
 
     thread_info = arg;
 
+    EXPECT_RET(!utils_setaffinity_pthread(pthread_self(), thread_info->core), NULL);
+
     res = (*thread_info->start_routine)(thread_info->arg);
     thread_info->tsc_end = read_tsc_p();
 
@@ -198,11 +214,13 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
 	       void *(*start_routine) (void *), void *arg)
 {
     static int tid = 0;
-    struct thread_info_s *_thread_info = &thread_info_vect[tid++];
+    struct thread_info_s *_thread_info = &thread_info_vect[tid];
 
     _thread_info->start_routine = start_routine;
     _thread_info->arg = arg;
     _thread_info->used = true;
+    _thread_info->core = core_affinity_map[tid & (CORE_AFFINITY_MAP_SIZE - 1)];
+    ++tid;
 
     return real_pthread_create(newthread, attr, _start_routine, _thread_info);
 }
