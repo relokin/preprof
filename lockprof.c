@@ -68,6 +68,9 @@ struct thread_info_s {
 static struct thread_info_s thread_info_vect[MAX_PROFILED_THREADS];
 static __thread struct thread_info_s *thread_info;
 
+#define THREAD_TO_CORE_MAP_SIZE 4
+static int thread_to_core_map[THREAD_TO_CORE_MAP_SIZE] = {1, 3, 5, 7};
+
 #define LOAD_FUNC(name) do {                            \
     *(void**) (&real_##name) = dlsym(RTLD_NEXT, #name); \
     assert(real_##name);                                \
@@ -77,17 +80,7 @@ static __thread struct thread_info_s *thread_info;
 static void
 init(void)
 {
-    cpu_set_t set;
-
-    CPU_ZERO(&set);
-    CPU_SET(1, &set);
-    CPU_SET(3, &set);
-    CPU_SET(5, &set);
-    CPU_SET(7, &set);
-    EXPECT_EXIT(!pthread_setaffinity_np(pthread_self(), sizeof(set), &set));
-
     LOAD_FUNC(pthread_create);
-
     LOAD_FUNC(pthread_mutex_lock);
     LOAD_FUNC(pthread_mutex_unlock);
     LOAD_FUNC(pthread_barrier_wait);
@@ -206,8 +199,7 @@ fini(void)
 static void *
 _start_routine(void *arg)
 {
-    void *res = NULL;
-
+    void *res;
     thread_info = arg;
 
     thread_info->tsc_start = read_tsc_p();
@@ -222,8 +214,14 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
 	       void *(*start_routine) (void *), void *arg)
 {
     static int tid = 0;
-    struct thread_info_s *_thread_info = &thread_info_vect[tid++];
+    struct thread_info_s *_thread_info; 
+    cpu_set_t set;
 
+    CPU_ZERO(&set);
+    CPU_SET(thread_to_core_map[tid % THREAD_TO_CORE_MAP_SIZE], &set);
+    EXPECT_EXIT(!pthread_setaffinity_np(pthread_self(), sizeof(set), &set));
+
+    _thread_info = &thread_info_vect[tid++];
     _thread_info->start_routine = start_routine;
     _thread_info->arg = arg;
     _thread_info->used = true;
