@@ -69,6 +69,9 @@ static uint64_t total_xxx;
 static struct thread_info_s thread_info_vect[MAX_PROFILED_THREADS];
 static __thread struct thread_info_s *thread_info;
 
+#define THREAD_INFO_VECT_FOREACH(_iter) \
+    for (int i = 0; i < nthreads && (_iter = &thread_info_vect[i]); i++)
+
 #define THREAD_TO_CORE_MAP_SIZE 4
 static int thread_to_core_map[THREAD_TO_CORE_MAP_SIZE] = {1, 3, 5, 7};
 
@@ -101,48 +104,36 @@ fini(void)
     log_t log;
     log_header_t header;
     log_event_t event;
+    thread_info_t *_thread_info_iter;
     const char *ofile, *e;
 
-    ofile = "foo.log";
+    ofile = NULL;
     if ((e = getenv("PREPROF_FILE")))
         ofile = e;
 
     /* Initialize log header */
+    memset(&header, 0, sizeof header);
     header.version = LOG_VERSION_CURRENT;
+    header.num_processes = nthreads;
 
-    for (int i = 0; i < nthreads; i++) {
-        /* initialize header */
-        if (header.num_processes < LOG_MAX_PROCS) {
-            log_header_process_t *h =
-                &header.processes[header.num_processes++];
-            h->pmc_map.counters = 0;
-            h->pmc_map.offcore_rsp0 = 0;
-            h->pmc_map.ireset = 0;
-        }
-    }
-
-    /* Write event to log file */
     EXPECT_EXIT(log_create(&log, &header, ofile) == LOG_ERROR_OK);
 
-    /* FIXME: quite dirty - but we profile only applications with threads that
-       execute the same code */
-
 #ifdef AGGREGATE
-#define DUMP_EVENT(lock_type)						\
-    do {								\
-	memset(&event, 0, sizeof(event));				\
-	for (int i = 0; i < nthreads; i++) {				\
-	    struct thread_info_s *_thread = &thread_info_vect[i];	\
-									\
-	    event.pmc[event.num_processes++].tsc =			\
-		_thread->lock_type ## _spin;				\
-	}								\
-	EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);     \
-    } while (0)
-    DUMP_EVENT(mutex);
-    DUMP_EVENT(barrier);
-    DUMP_EVENT(rwlock);
-#undef DUMP_EVENT
+    memset(&event, 0, sizeof(event));
+    THREAD_INFO_VECT_FOREACH(_thread_info_iter)
+        event.pmc[event.num_processes++].tsc = _thread_info_iter->mutex_spin;
+    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);
+
+    memset(&event, 0, sizeof(event));
+    THREAD_INFO_VECT_FOREACH(_thread_info_iter)
+        event.pmc[event.num_processes++].tsc = _thread_info_iter->rwlock_spin;
+    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);
+
+    memset(&event, 0, sizeof(event));
+    THREAD_INFO_VECT_FOREACH(_thread_info_iter)
+        event.pmc[event.num_processes++].tsc = _thread_info_iter->barrier_spin;
+    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);
+
 #else
     int len = thread_info_vect[0].timestamp->len;
     for (int j = 0; j < len; j++) {
@@ -160,11 +151,11 @@ fini(void)
 
     uint64_t min_tsc_start = UINT64_C(-1);
     uint64_t max_tsc_end = UINT64_C(0);
-    for (int i = 0; i < nthreads; i++) {
-       if (max_tsc_end < thread_info_vect[i].tsc_end)
-           max_tsc_end = thread_info_vect[i].tsc_end;
-        if (min_tsc_start > thread_info_vect[i].tsc_start)
-           min_tsc_start = thread_info_vect[i].tsc_start;
+    THREAD_INFO_VECT_FOREACH(_thread_info_iter) {
+        if (max_tsc_end < _thread_info_iter->tsc_end)
+            max_tsc_end = _thread_info_iter->tsc_end;
+        if (min_tsc_start > _thread_info_iter->tsc_start)
+            min_tsc_start = _thread_info_iter->tsc_start;
     }
 
     memset(&event, 0, sizeof(event));
@@ -188,6 +179,8 @@ fini(void)
 	g_array_free(thread_info_vect[i].timestamp, FALSE);
 #endif /* AGGREGATE */
 
+
+    /* XXX Figure out a way to dump this in log file */
     for (int i = 0; i < nthreads; i++) {
         struct thread_info_s *t = &thread_info_vect[i];
 
