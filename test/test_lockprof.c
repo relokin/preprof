@@ -85,8 +85,9 @@ parse_args(args_t *args, int argc, char **argv)
     return 0;
 }
 
-#define PRIVATE_COMPUTE 10000
-#define CRITCAL_COMPUTE 10
+#define ITERATIONS      10000
+#define PRIVATE_COMPUTE 100
+#define CRITCAL_COMPUTE 100
 
 static void *
 do_test(void *args)
@@ -96,8 +97,8 @@ do_test(void *args)
     unsigned long tsc;
 
     tsc = read_tsc_p();
-    for (i = 0; i < 1000000; i++) {
-        count += delay(PRIVATE_COMPUTE);
+    for (i = 0; i < ITERATIONS; i++) {
+        count += delay(PRIVATE_COMPUTE + i * 10);
 
         lock_lock(&lock);
         count += delay(CRITCAL_COMPUTE);
