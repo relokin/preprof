@@ -25,19 +25,9 @@ static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *,
 				  void *(*) (void *), void *);
 
 static int (*real_pthread_mutex_lock)(pthread_mutex_t *);
-static int (*real_pthread_mutex_unlock)(pthread_mutex_t *);
 static int (*real_pthread_barrier_wait)(pthread_barrier_t *);
 static int (*real_pthread_rwlock_rdlock)(pthread_rwlock_t *);
 static int (*real_pthread_rwlock_wrlock)(pthread_rwlock_t *);
-
-/* No need to do anything with them now */
-// static int (*real_pthread_mutex_trylock)(pthread_mutex_t *);
-
-//static int (*real_pthread_barrier_init)(pthread_barrier_t *restrict,
-//					const pthread_barrierattr_t *restrict,
-//					unsigned);
-//static int (*real_pthread_rwlock_init)(pthread_rwlock_t * restrict,
-//				       const pthread_rwlockattr_t * restrict);
 
 /* Unsupported, exist if any of these is used */
 static int (*real_pthread_cond_init)(pthread_cond_t *restrict,
@@ -92,7 +82,6 @@ init(void)
 {
     LOAD_FUNC(pthread_create);
     LOAD_FUNC(pthread_mutex_lock);
-    LOAD_FUNC(pthread_mutex_unlock);
     LOAD_FUNC(pthread_barrier_wait);
     LOAD_FUNC(pthread_rwlock_rdlock);
     LOAD_FUNC(pthread_rwlock_wrlock);
@@ -269,12 +258,6 @@ pthread_mutex_lock(pthread_mutex_t *mutex)
 }
 
 int
-pthread_mutex_unlock(pthread_mutex_t *mutex)
-{
-    return real_pthread_mutex_unlock(mutex);
-}
-
-int
 pthread_rwlock_rdlock(pthread_rwlock_t *rwlock)
 {
     int res;
@@ -283,6 +266,7 @@ pthread_rwlock_rdlock(pthread_rwlock_t *rwlock)
     tsc1 = read_tsc_p();
     res = real_pthread_rwlock_rdlock(rwlock);
     tsc_diff = read_tsc_p() - tsc1;
+
 #ifdef AGGREGATE
     thread_info->rwlock_spin_local += tsc_diff;
 #else
@@ -301,12 +285,12 @@ pthread_rwlock_wrlock(pthread_rwlock_t *rwlock)
     tsc1 = read_tsc_p();
     res = real_pthread_rwlock_wrlock(rwlock);
     tsc_diff = read_tsc_p() - tsc1;
+
 #ifdef AGGREGATE
     thread_info->rwlock_spin_local += tsc_diff;
 #else
     g_array_append_val(thread_info->timestamp, tsc_diff);
 #endif /* AGGREGATE */
-
 
     return res;
 }
