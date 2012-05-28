@@ -10,6 +10,7 @@
 #include <dlfcn.h>
 #include <glib.h>
 #include <errno.h>
+#include <numa.h>
 
 #include "tsc.h"
 #include "log.h"
@@ -40,6 +41,7 @@ static void fini(void) __attribute ((destructor));
 typedef struct thread_info_s {
     void *(*start_routine) (void *);
     void *arg;
+    int core;
 
 #ifdef AGGREGATE
     uint64_t mutex_spin;
@@ -56,6 +58,8 @@ typedef struct thread_info_s {
 /* Global variables */
 static int nthreads;
 
+static int opt_null_sync;
+
 #define MAX_PROFILED_THREADS 128
 static struct thread_info_s thread_info_vect[MAX_PROFILED_THREADS];
 static __thread struct thread_info_s *thread_info;
@@ -65,15 +69,49 @@ static __thread struct thread_info_s *thread_info;
 
 #define THREAD_TO_CORE_MAP_SIZE 4
 static int thread_to_core_map[THREAD_TO_CORE_MAP_SIZE] = {1, 3, 5, 7};
+static int numa_node = 1;
 
 #define LOAD_FUNC(name) do {                            \
     *(void**) (&real_##name) = dlsym(RTLD_NEXT, #name); \
     assert(real_##name);                                \
 } while (0)
 
+static int
+set_core_affinity(int core)
+{
+    cpu_set_t set;
+
+    CPU_ZERO(&set);
+    CPU_SET(core, &set);
+
+    EXPECT(!pthread_setaffinity_np(pthread_self(), sizeof set, &set));
+    return 0;
+}
+
+static int
+set_numa_affinity(int node)
+{
+    struct bitmask *nm;
+
+    EXPECT(!numa_available());
+    EXPECT(numa_bitmask_isbitset(numa_get_mems_allowed(), node));
+
+    EXPECT((nm = numa_allocate_nodemask()) != NULL);
+    numa_bitmask_clearall(nm);
+    numa_bitmask_setbit(nm, node);
+    numa_set_membind(nm);
+    numa_free_nodemask(nm);
+    return 0;
+}
+
 static void
 init(void)
 {
+    const char *e;
+
+    if ((e = getenv("PREPROF_NULL_SYNC")))
+        opt_null_sync = 1;
+
     LOAD_FUNC(pthread_create);
     LOAD_FUNC(pthread_mutex_lock);
     LOAD_FUNC(pthread_barrier_wait);
@@ -81,6 +119,8 @@ init(void)
     LOAD_FUNC(pthread_rwlock_wrlock);
 
     LOAD_FUNC(pthread_cond_init);
+
+    EXPECT_EXIT(!set_numa_affinity(numa_node));
 
 #ifndef AGGREGATE
     for (int i = 0; i < MAX_PROFILED_THREADS; i++)
@@ -187,7 +227,10 @@ pthread_mutex_lock(pthread_mutex_t *mutex)
     uint64_t tsc1, tsc_diff;
 
     tsc1 = read_tsc_p();
-    res = real_pthread_mutex_lock(mutex);
+    if (!opt_null_sync)
+        res = real_pthread_mutex_lock(mutex);
+    else
+        res = 0;
     tsc_diff = read_tsc_p() - tsc1;
 
 #ifdef AGGREGATE
@@ -206,7 +249,10 @@ pthread_rwlock_rdlock(pthread_rwlock_t *rwlock)
     uint64_t tsc1, tsc_diff;
 
     tsc1 = read_tsc_p();
-    res = real_pthread_rwlock_rdlock(rwlock);
+    if (!opt_null_sync)
+        res = real_pthread_rwlock_rdlock(rwlock);
+    else
+        res = 0;
     tsc_diff = read_tsc_p() - tsc1;
 
 #ifdef AGGREGATE
@@ -225,7 +271,10 @@ pthread_rwlock_wrlock(pthread_rwlock_t *rwlock)
     uint64_t tsc1, tsc_diff;
 
     tsc1 = read_tsc_p();
-    res = real_pthread_rwlock_wrlock(rwlock);
+    if (!opt_null_sync)
+        res = real_pthread_rwlock_wrlock(rwlock);
+    else
+        res = 0;
     tsc_diff = read_tsc_p() - tsc1;
 
 #ifdef AGGREGATE
@@ -244,7 +293,10 @@ pthread_barrier_wait(pthread_barrier_t *barrier)
     uint64_t tsc1, tsc_diff;
 
     tsc1 = read_tsc_p();
-    res = real_pthread_barrier_wait(barrier);
+    if (!opt_null_sync)
+        res = real_pthread_barrier_wait(barrier);
+    else
+        res = 0; /* XXX Should return PTHREAD_BARRIER_SERIAL_THREAD for one thread */
     tsc_diff = read_tsc_p() - tsc1;
 
 #ifdef AGGREGATE
@@ -270,7 +322,10 @@ static void *
 _start_routine(void *arg)
 {
     void *res;
+
     thread_info = arg;
+
+    EXPECT_RET(!set_core_affinity(thread_info->core), NULL);
 
     thread_info->tsc_start = read_tsc_p();
     res = (*thread_info->start_routine)(thread_info->arg);
@@ -283,16 +338,12 @@ int
 pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
 	       void *(*start_routine) (void *), void *arg)
 {
-    cpu_set_t set;
     struct thread_info_s *_thread_info; 
-
-    CPU_ZERO(&set);
-    CPU_SET(thread_to_core_map[nthreads % THREAD_TO_CORE_MAP_SIZE], &set);
-    EXPECT_EXIT(!pthread_setaffinity_np(pthread_self(), sizeof(set), &set));
 
     _thread_info = &thread_info_vect[nthreads];
     _thread_info->start_routine = start_routine;
     _thread_info->arg = arg;
+    _thread_info->core = thread_to_core_map[nthreads % THREAD_TO_CORE_MAP_SIZE];
 
     ++nthreads;
 
