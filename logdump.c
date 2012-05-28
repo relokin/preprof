@@ -9,7 +9,8 @@
 
 static const char *usage_str = 
 "Usage: logdump [OPTION]... [FILE]\n\n"
-"  --help, -h    Print this message\n"
+"  --help,       Print this message\n"
+"  --header, -h  Print header\n"
 "  --all, -a     Print all events\n"
 "  --sum, -s     Print sum of all events\n";
 
@@ -24,6 +25,7 @@ static const char *usage_str =
 
 typedef struct {
     char *filename;
+    int print_header;
     int print_all;
     int print_sum;
 } args_t;
@@ -35,9 +37,10 @@ args_parse(int argc, char **argv)
 {
     static const char *short_opts = "has";
     static const struct option long_opts[] = {
-        {"help", 0, NULL, 'h'},
-        {"all",  0, NULL, 'a'},
-        {"sum",  0, NULL, 's'},
+        {"help",   0, NULL, 'H'},
+        {"header", 0, NULL, 'h'},
+        {"all",    0, NULL, 'a'},
+        {"sum",    0, NULL, 's'},
     };
 
     memset(&args, 0, sizeof args);
@@ -47,9 +50,12 @@ args_parse(int argc, char **argv)
                 if (optind < argc)
                     args.filename = argv[optind];
                 break;
-            case 'h':
+            case 'H':
                 printf("%s", usage_str);
                 exit(EXIT_SUCCESS);
+            case 'h':
+                args.print_header = 1;
+                continue;
             case 'a':
                 args.print_all = 1;
                 continue;
@@ -168,7 +174,9 @@ print(void)
 
     E(log_open(&log, args.filename));
     E(log_header(&log, &header));
-    print_header(&header);
+
+    if (args.print_header)
+        print_header(&header);
 
     for (;;) {
         log_error_t error;
