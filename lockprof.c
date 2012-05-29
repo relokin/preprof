@@ -25,10 +25,16 @@
 static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *,
 				  void *(*) (void *), void *);
 
+static int (*real_pthread_mutex_init)(pthread_mutex_t *, const pthread_mutexattr_t *);
+static int (*real_pthread_mutex_destroy)(pthread_mutex_t *);
 static int (*real_pthread_mutex_lock)(pthread_mutex_t *);
-static int (*real_pthread_barrier_wait)(pthread_barrier_t *);
+static int (*real_pthread_mutex_unlock)(pthread_mutex_t *);
+
 static int (*real_pthread_rwlock_rdlock)(pthread_rwlock_t *);
 static int (*real_pthread_rwlock_wrlock)(pthread_rwlock_t *);
+static int (*real_pthread_rwlock_unlock)(pthread_rwlock_t *);
+
+static int (*real_pthread_barrier_wait)(pthread_barrier_t *);
 
 /* Unsupported, exist if any of these is used */
 static int (*real_pthread_cond_init)(pthread_cond_t *restrict,
@@ -53,6 +59,11 @@ typedef struct thread_info_s {
 
     uint64_t tsc_start;
     uint64_t tsc_end;
+
+    uint64_t tsc_comp;
+    uint64_t tsc_prev;
+
+    pthread_mutex_t mutex;
 } thread_info_t;
 
 /* Global variables */
@@ -113,10 +124,17 @@ init(void)
         opt_null_sync = 1;
 
     LOAD_FUNC(pthread_create);
+
+    LOAD_FUNC(pthread_mutex_init);
+    LOAD_FUNC(pthread_mutex_destroy);
     LOAD_FUNC(pthread_mutex_lock);
-    LOAD_FUNC(pthread_barrier_wait);
+    LOAD_FUNC(pthread_mutex_unlock);
+
     LOAD_FUNC(pthread_rwlock_rdlock);
     LOAD_FUNC(pthread_rwlock_wrlock);
+    LOAD_FUNC(pthread_rwlock_unlock);
+
+    LOAD_FUNC(pthread_barrier_wait);
 
     LOAD_FUNC(pthread_cond_init);
 
@@ -164,6 +182,12 @@ fini(void)
     THREAD_INFO_VECT_FOREACH(_thread_info_iter)
         event.pmc[event.num_processes++].tsc = _thread_info_iter->barrier_spin;
     EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);
+
+    memset(&event, 0, sizeof(event));
+    THREAD_INFO_VECT_FOREACH(_thread_info_iter)
+        event.pmc[event.num_processes++].tsc = _thread_info_iter->tsc_comp;
+    EXPECT_EXIT(log_write_event(&log, &event) == LOG_ERROR_OK);
+
 
 #else
     int len = thread_info_vect[0].timestamp->len;
@@ -220,21 +244,63 @@ fini(void)
     }
 }
 
+#if 0
+int
+pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr)
+{
+    return pthread_spin_init((pthread_spinlock_t *)mutex, PTHREAD_PROCESS_SHARED);
+}
+
+int
+pthread_mutex_destroy(pthread_mutex_t *mutex)
+{
+    return pthread_spin_destroy((pthread_spinlock_t *)mutex);
+}
+#endif
+
 int
 pthread_mutex_lock(pthread_mutex_t *mutex)
 {
-    int res;
-    uint64_t tsc1, tsc_diff;
+    int res = 0;
+    uint64_t tsc1, tsc2, tsc_diff, tsc_comp;
 
     tsc1 = read_tsc_p();
     if (!opt_null_sync)
         res = real_pthread_mutex_lock(mutex);
-    else
-        res = 0;
-    tsc_diff = read_tsc_p() - tsc1;
+    tsc2 = read_tsc_p();
+
+    tsc_diff = tsc2 - tsc1;
+    tsc_comp = tsc1 - thread_info->tsc_prev;
+    thread_info->tsc_prev = tsc2;
 
 #ifdef AGGREGATE
     thread_info->mutex_spin += tsc_diff;
+    thread_info->tsc_comp += tsc_comp;
+#else
+    g_array_append_val(thread_info->timestamp, tsc_diff);
+#endif /* AGGREGATE */
+
+    return res;
+}
+
+int
+pthread_mutex_unlock(pthread_mutex_t *mutex)
+{
+    int res = 0;
+    uint64_t tsc1, tsc2, tsc_diff, tsc_comp;
+
+    tsc1 = read_tsc_p();
+    if (!opt_null_sync)
+        res = real_pthread_mutex_unlock(mutex);
+    tsc2 = read_tsc_p();
+
+    tsc_diff = tsc2 - tsc1;
+    tsc_comp = tsc1 - thread_info->tsc_prev;
+    thread_info->tsc_prev = tsc2;
+
+#ifdef AGGREGATE
+    thread_info->mutex_spin += tsc_diff;
+    thread_info->tsc_comp += tsc_comp;
 #else
     g_array_append_val(thread_info->timestamp, tsc_diff);
 #endif /* AGGREGATE */
@@ -245,14 +311,12 @@ pthread_mutex_lock(pthread_mutex_t *mutex)
 int
 pthread_rwlock_rdlock(pthread_rwlock_t *rwlock)
 {
-    int res;
+    int res = 0;
     uint64_t tsc1, tsc_diff;
 
     tsc1 = read_tsc_p();
     if (!opt_null_sync)
         res = real_pthread_rwlock_rdlock(rwlock);
-    else
-        res = 0;
     tsc_diff = read_tsc_p() - tsc1;
 
 #ifdef AGGREGATE
@@ -267,14 +331,12 @@ pthread_rwlock_rdlock(pthread_rwlock_t *rwlock)
 int
 pthread_rwlock_wrlock(pthread_rwlock_t *rwlock)
 {
-    int res;
+    int res = 0;
     uint64_t tsc1, tsc_diff;
 
     tsc1 = read_tsc_p();
     if (!opt_null_sync)
         res = real_pthread_rwlock_wrlock(rwlock);
-    else
-        res = 0;
     tsc_diff = read_tsc_p() - tsc1;
 
 #ifdef AGGREGATE
@@ -287,20 +349,34 @@ pthread_rwlock_wrlock(pthread_rwlock_t *rwlock)
 }
 
 int
+pthread_rwlock_unlock(pthread_rwlock_t *rwlock)
+{
+    int res = 0;
+
+    if (!opt_null_sync)
+        res = real_pthread_rwlock_unlock(rwlock);
+
+    return 0;
+}
+
+int
 pthread_barrier_wait(pthread_barrier_t *barrier)
 {
-    int res;
-    uint64_t tsc1, tsc_diff;
+    int res = 0;
+    uint64_t tsc1, tsc2, tsc_diff, tsc_comp;
 
     tsc1 = read_tsc_p();
     if (!opt_null_sync)
         res = real_pthread_barrier_wait(barrier);
-    else
-        res = 0; /* XXX Should return PTHREAD_BARRIER_SERIAL_THREAD for one thread */
-    tsc_diff = read_tsc_p() - tsc1;
+    tsc2 = read_tsc_p();
+
+    tsc_diff = tsc2 - tsc1;
+    tsc_comp = tsc1 - thread_info->tsc_prev;
+    thread_info->tsc_prev = tsc2;
 
 #ifdef AGGREGATE
     thread_info->barrier_spin += tsc_diff;
+    thread_info->tsc_comp += tsc_comp;
 #else
     g_array_append_val(thread_info->timestamp, tsc2 - tsc1);
 #endif /* AGGREGATE */
@@ -328,6 +404,7 @@ _start_routine(void *arg)
     EXPECT_RET(!set_core_affinity(thread_info->core), NULL);
 
     thread_info->tsc_start = read_tsc_p();
+    thread_info->tsc_prev = thread_info->tsc_start;
     res = (*thread_info->start_routine)(thread_info->arg);
     thread_info->tsc_end = read_tsc_p();
 
@@ -344,6 +421,8 @@ pthread_create(pthread_t *newthread, const pthread_attr_t *attr,
     _thread_info->start_routine = start_routine;
     _thread_info->arg = arg;
     _thread_info->core = thread_to_core_map[nthreads % THREAD_TO_CORE_MAP_SIZE];
+
+    pthread_mutex_init(&_thread_info->mutex, NULL);
 
     ++nthreads;
 
